@@ -3137,6 +3137,22 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+
+std::vector<std::wstring> SearchToolPage_GetResultPaths() {
+    std::vector<std::wstring> out;
+    out.reserve(g_results.size());
+
+    for (const auto& it : g_results) {
+        if (!it) continue;
+        if (it->path.empty()) continue;
+        out.push_back(it->path);
+    }
+
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 // -------------------- Page exports --------------------
 bool RegisterSearchToolPageClass(HINSTANCE hInstance) {
     g_hInst = hInstance;
@@ -3171,14 +3187,8 @@ HWND CreateSearchToolPage(HWND parent, HINSTANCE hInstance, const RECT& rc) {
         L"ExcelFinderAllInOneV5Page",
         L"",
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-        rc.left,
-        rc.top,
-        rc.right - rc.left,
-        rc.bottom - rc.top,
-        parent,
-        nullptr,
-        hInstance,
-        nullptr
+        rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+        parent, nullptr, hInstance, nullptr
     );
 }
 

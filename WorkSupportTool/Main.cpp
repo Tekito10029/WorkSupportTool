@@ -23,93 +23,45 @@ HWND g_hwndSearchPage = nullptr;
 HWND g_hwndPrintPage = nullptr;
 int g_currentTab = 0;
 
-constexpr UINT WM_APP_REFRESH_ACTIVE_PAGE = WM_APP + 100;
-
-RECT GetPageRect() {
+RECT GetPageRect(HWND hwnd) {
     RECT rc{};
-    if (g_tabMain && IsWindow(g_tabMain)) {
-        GetClientRect(g_tabMain, &rc);
-        TabCtrl_AdjustRect(g_tabMain, FALSE, &rc);
-        return rc;
-    }
+    GetClientRect(hwnd, &rc);
 
-    if (g_hwndMain && IsWindow(g_hwndMain)) {
-        GetClientRect(g_hwndMain, &rc);
-        const int padding = 8;
-        RECT page{
-            padding,
-            padding + 32,
-            rc.right - padding,
-            rc.bottom - padding
-        };
-        return page;
-    }
+    const int padding = 10;
+    const int tabH = 28;
 
-    return rc;
-}
-
-void RefreshWindowTree(HWND hwnd) {
-    if (!hwnd || !IsWindow(hwnd)) return;
-    RedrawWindow(hwnd, nullptr, nullptr,
-        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
-    UpdateWindow(hwnd);
-}
-
-void RefreshActivePageNow() {
-    RECT page = GetPageRect();
-
-    if (g_hwndSearchPage && IsWindow(g_hwndSearchPage)) {
-        SearchToolPage_Resize(g_hwndSearchPage, page);
-    }
-    if (g_hwndPrintPage && IsWindow(g_hwndPrintPage)) {
-        PrintToolPage_Resize(g_hwndPrintPage, page);
-    }
-
-    const bool showSearch = (g_currentTab == 0);
-
-    if (g_hwndSearchPage && IsWindow(g_hwndSearchPage)) {
-        ShowWindow(g_hwndSearchPage, showSearch ? SW_SHOW : SW_HIDE);
-    }
-    if (g_hwndPrintPage && IsWindow(g_hwndPrintPage)) {
-        ShowWindow(g_hwndPrintPage, showSearch ? SW_HIDE : SW_SHOW);
-    }
-
-    HWND activePage = showSearch ? g_hwndSearchPage : g_hwndPrintPage;
-    if (activePage && IsWindow(activePage)) {
-        SetWindowPos(activePage, HWND_TOP,
-                     page.left, page.top,
-                     page.right - page.left,
-                     page.bottom - page.top,
-                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        RefreshWindowTree(activePage);
-    }
-
-    if (g_tabMain && IsWindow(g_tabMain)) {
-        RefreshWindowTree(g_tabMain);
-    }
-    if (g_hwndMain && IsWindow(g_hwndMain)) {
-        RefreshWindowTree(g_hwndMain);
-    }
+    RECT page{
+        padding,
+        padding + tabH + 8,
+        rc.right - padding,
+        rc.bottom - padding
+    };
+    return page;
 }
 
 void LayoutMain(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
-    const int padding = 8;
-    MoveWindow(g_tabMain, padding, padding,
-               max(300, rc.right - padding * 2),
-               max(120, rc.bottom - padding * 2),
-               TRUE);
+    const int padding = 10;
+    const int tabH = 28;
 
-    PostMessageW(hwnd, WM_APP_REFRESH_ACTIVE_PAGE, 0, 0);
+    MoveWindow(g_tabMain, padding, padding, max(300, rc.right - padding * 2), tabH, TRUE);
+
+    RECT page = GetPageRect(hwnd);
+    SearchToolPage_Resize(g_hwndSearchPage, page);
+    PrintToolPage_Resize(g_hwndPrintPage, page);
 }
 
 void ApplyMainTab() {
-    if (g_tabMain && IsWindow(g_tabMain)) {
-        TabCtrl_SetCurSel(g_tabMain, g_currentTab);
+    const bool showSearch = (g_currentTab == 0);
+
+    if (!showSearch) {
+        PrintToolPage_SetFiles(SearchToolPage_GetResultPaths());
     }
-    PostMessageW(g_hwndMain, WM_APP_REFRESH_ACTIVE_PAGE, 0, 0);
+
+    SearchToolPage_SetVisible(g_hwndSearchPage, showSearch);
+    PrintToolPage_SetVisible(g_hwndPrintPage, !showSearch);
 }
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -120,8 +72,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
-        g_tabMain = CreateWindowExW(0, WC_TABCONTROLW, L"",
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+        g_tabMain = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         SendMessageW(g_tabMain, WM_SETFONT, (WPARAM)hFont, TRUE);
 
@@ -133,17 +84,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         TabCtrl_InsertItem(g_tabMain, 1, &ti);
         TabCtrl_SetCurSel(g_tabMain, 0);
 
-        RECT page = GetPageRect();
-        g_hwndSearchPage = CreateSearchToolPage(g_tabMain, g_hInst, page);
-        g_hwndPrintPage  = CreatePrintToolPage(g_tabMain, g_hInst, page);
-
-        if (!g_hwndSearchPage || !g_hwndPrintPage) {
-            MessageBoxW(hwnd, L"子ページの作成に失敗しました。", L"エラー", MB_OK | MB_ICONERROR);
-        }
+        RECT page = GetPageRect(hwnd);
+        g_hwndSearchPage = CreateSearchToolPage(hwnd, g_hInst, page);
+        g_hwndPrintPage = CreatePrintToolPage(hwnd, g_hInst, page);
 
         g_currentTab = 0;
-        LayoutMain(hwnd);
         ApplyMainTab();
+        LayoutMain(hwnd);
         return 0;
     }
 
@@ -157,14 +104,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         if (hdr && hdr->hwndFrom == g_tabMain && hdr->code == TCN_SELCHANGE) {
             g_currentTab = TabCtrl_GetCurSel(g_tabMain);
             ApplyMainTab();
+            LayoutMain(hwnd);
             return 0;
         }
         break;
     }
-
-    case WM_APP_REFRESH_ACTIVE_PAGE:
-        RefreshActivePageNow();
-        return 0;
 
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -184,7 +128,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     INITCOMMONCONTROLSEX icc{};
     icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_WIN95_CLASSES | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_DATE_CLASSES | ICC_TAB_CLASSES;
+    icc.dwICC = ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_DATE_CLASSES | ICC_TAB_CLASSES;
     InitCommonControlsEx(&icc);
 
     RegisterSearchToolPageClass(hInstance);

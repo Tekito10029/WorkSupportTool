@@ -25,24 +25,24 @@
 
 namespace {
 
-    enum : int {
-        IDC_STATIC_FILES = 5001,
-        IDC_EDIT_FILES,
-        IDC_BTN_ADD_FILES,
-        IDC_BTN_CLEAR_FILES,
+enum : int {
+    IDC_STATIC_FILES = 5001,
+    IDC_EDIT_FILES,
+    IDC_BTN_ADD_FILES,
+    IDC_BTN_CLEAR_FILES,
 
-        IDC_STATIC_SHEETS,
-        IDC_EDIT_SHEETS,
-        IDC_STATIC_SHEETS_HINT,
+    IDC_STATIC_SHEETS,
+    IDC_EDIT_SHEETS,
+    IDC_STATIC_SHEETS_HINT,
 
-        IDC_STATIC_COPIES,
-        IDC_EDIT_COPIES,
-        IDC_CHK_PREVIEW,
+    IDC_STATIC_COPIES,
+    IDC_EDIT_COPIES,
+    IDC_CHK_PREVIEW,
+    IDC_CHK_USE_PRINTAREA,
 
-        IDC_BTN_PRINT,
-        IDC_EDIT_LOG
-    };
-}
+    IDC_BTN_PRINT,
+    IDC_EDIT_LOG
+};
 
 HINSTANCE g_hInst = nullptr;
 HWND g_hwndPage = nullptr;
@@ -59,6 +59,7 @@ HWND g_staticSheetsHint = nullptr;
 HWND g_staticCopies = nullptr;
 HWND g_editCopies = nullptr;
 HWND g_chkPreview = nullptr;
+HWND g_chkUsePrintArea = nullptr;
 
 HWND g_btnPrint = nullptr;
 HWND g_editLog = nullptr;
@@ -321,10 +322,18 @@ bool OpenWorkbook(IDispatch* workbooks, const std::wstring& path, IDispatch** ou
     return true;
 }
 
-bool PrintWorksheet(IDispatch* ws, int copies, bool preview) {
-    VARIANT vCopies, vPreview;
-    VariantInit(&vCopies);
-    VariantInit(&vPreview);
+bool PrintWorksheet(IDispatch* ws, int copies, bool preview, bool usePrintArea) {
+    VARIANT vFrom, vTo, vCopies, vPreview, vActivePrinter, vPrintToFile, vCollate, vPrToFileName, vIgnorePrintAreas;
+    VariantInit(&vFrom); VariantInit(&vTo); VariantInit(&vCopies); VariantInit(&vPreview);
+    VariantInit(&vActivePrinter); VariantInit(&vPrintToFile); VariantInit(&vCollate);
+    VariantInit(&vPrToFileName); VariantInit(&vIgnorePrintAreas);
+
+    vFrom.vt = VT_ERROR;           vFrom.scode = DISP_E_PARAMNOTFOUND;
+    vTo.vt = VT_ERROR;             vTo.scode = DISP_E_PARAMNOTFOUND;
+    vActivePrinter.vt = VT_ERROR;  vActivePrinter.scode = DISP_E_PARAMNOTFOUND;
+    vPrintToFile.vt = VT_ERROR;    vPrintToFile.scode = DISP_E_PARAMNOTFOUND;
+    vCollate.vt = VT_ERROR;        vCollate.scode = DISP_E_PARAMNOTFOUND;
+    vPrToFileName.vt = VT_ERROR;   vPrToFileName.scode = DISP_E_PARAMNOTFOUND;
 
     vCopies.vt = VT_I4;
     vCopies.lVal = copies;
@@ -332,27 +341,36 @@ bool PrintWorksheet(IDispatch* ws, int copies, bool preview) {
     vPreview.vt = VT_BOOL;
     vPreview.boolVal = preview ? VARIANT_TRUE : VARIANT_FALSE;
 
-    return CallMethodN(ws, L"PrintOut", 2, &vCopies, &vPreview);
+    // Excel PrintOut の IgnorePrintAreas:
+    // False = PrintArea を使う / True = PrintArea を無視する
+    vIgnorePrintAreas.vt = VT_BOOL;
+    vIgnorePrintAreas.boolVal = usePrintArea ? VARIANT_FALSE : VARIANT_TRUE;
+
+    return CallMethodN(ws, L"PrintOut", 9,
+        &vFrom, &vTo, &vCopies, &vPreview,
+        &vActivePrinter, &vPrintToFile, &vCollate,
+        &vPrToFileName, &vIgnorePrintAreas);
 }
 
 bool PrintOneBook(const std::wstring& filePath,
                   const std::vector<std::wstring>& sheetNames,
                   int copies,
                   bool preview,
+                  bool usePrintArea,
                   std::wstring& outMessage) {
     outMessage.clear();
 
     CLSID clsid{};
     HRESULT hr = CLSIDFromProgID(L"Excel.Application", &clsid);
     if (FAILED(hr)) {
-        outMessage = L"Excel.Application could not be created.";
+        outMessage = L"Excel.Application を作成できませんでした。";
         return false;
     }
 
     IDispatch* app = nullptr;
     hr = CoCreateInstance(clsid, nullptr, CLSCTX_LOCAL_SERVER, IID_IDispatch, (void**)&app);
     if (FAILED(hr) || !app) {
-        outMessage = L"Failed to start Excel.";
+        outMessage = L"Excel を起動できませんでした。";
         return false;
     }
 
@@ -361,14 +379,14 @@ bool PrintOneBook(const std::wstring& filePath,
 
     IDispatch* workbooks = nullptr;
     if (!GetDispatchProperty(app, L"Workbooks", &workbooks)) {
-        outMessage = L"Failed to get Workbooks.";
+        outMessage = L"Workbooks の取得に失敗しました。";
         app->Release();
         return false;
     }
 
     IDispatch* book = nullptr;
     if (!OpenWorkbook(workbooks, filePath, &book)) {
-        outMessage = L"Failed to open workbook.";
+        outMessage = L"ブックを開けませんでした。";
         workbooks->Release();
         app->Release();
         return false;
@@ -388,8 +406,8 @@ bool PrintOneBook(const std::wstring& filePath,
                 continue;
             }
 
-            if (PrintWorksheet(ws, copies, preview)) printed.push_back(target);
-            else missing.push_back(target + L"(print failed)");
+            if (PrintWorksheet(ws, copies, preview, usePrintArea)) printed.push_back(target);
+            else missing.push_back(target + L"(印刷失敗)");
 
             ws->Release();
         }
@@ -398,17 +416,17 @@ bool PrintOneBook(const std::wstring& filePath,
     {
         std::wstringstream ss;
         if (!printed.empty()) {
-            ss << L"Printed: " << filePath << L" / ";
+            ss << L"印刷: " << filePath << L" / ";
             for (size_t i = 0; i < printed.size(); ++i) {
                 if (i) ss << L", ";
                 ss << printed[i];
             }
         } else {
-            ss << L"No target sheets printed: " << filePath;
+            ss << L"対象シートを印刷できませんでした: " << filePath;
         }
 
         if (!missing.empty()) {
-            ss << L" / Missing or failed: ";
+            ss << L" / 見つからない、または失敗: ";
             for (size_t i = 0; i < missing.size(); ++i) {
                 if (i) ss << L", ";
                 ss << missing[i];
@@ -436,7 +454,7 @@ bool PrintOneBook(const std::wstring& filePath,
 
 void DoPrint() {
     if (g_files.empty()) {
-        MessageBoxW(g_hwndPage, L"Please add Excel workbooks first.", L"Print Tool", MB_ICONWARNING);
+        MessageBoxW(g_hwndPage, L"先にExcelブックを追加してください。", L"印刷ツール", MB_ICONWARNING);
         return;
     }
 
@@ -444,18 +462,19 @@ void DoPrint() {
     GetWindowTextW(g_editSheets, sheetBuf, 4095);
     std::vector<std::wstring> sheetNames = SplitSheetNames(sheetBuf);
     if (sheetNames.empty()) {
-        MessageBoxW(g_hwndPage, L"Please enter at least one sheet name.", L"Print Tool", MB_ICONWARNING);
+        MessageBoxW(g_hwndPage, L"印刷するシート名を1つ以上入力してください。", L"印刷ツール", MB_ICONWARNING);
         return;
     }
 
     const int copies = GetCopies();
     const bool preview = GetCheck(g_chkPreview);
+    const bool usePrintArea = GetCheck(g_chkUsePrintArea);
 
-    AddLog(L"Start printing...");
+    AddLog(usePrintArea ? L"印刷を開始します。（PrintAreaを使用）" : L"印刷を開始します。（PrintAreaを無視）");
 
     for (const auto& file : g_files) {
         std::wstring msg;
-        PrintOneBook(file, sheetNames, copies, preview, msg);
+        PrintOneBook(file, sheetNames, copies, preview, usePrintArea, msg);
         AddLog(msg);
         MSG m{};
         while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
@@ -464,43 +483,43 @@ void DoPrint() {
         }
     }
 
-    AddLog(L"Done.");
+    AddLog(L"完了しました。");
 }
 
 void LayoutPage(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
-    const int margin = 10;
+    const int margin = 12;
     const int gap = 8;
-    const int rowH = 28;
-    const int btnW = 110;
-    const int labelW = 90;
-    const int copiesW = 56;
+    const int btnW = 120;
+    const int labelW = 92;
+    const int copiesW = 60;
 
     int x = margin;
     int y = margin;
     int w = rc.right - rc.left - margin * 2;
 
-    MoveWindow(g_staticFiles, x, y + 5, labelW, 20, TRUE);
-    MoveWindow(g_btnAddFiles, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
-    MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
-    y += rowH + gap;
+    MoveWindow(g_staticFiles, x, y + 4, labelW, 20, TRUE);
+    MoveWindow(g_btnAddFiles, x + w - btnW * 2 - gap, y, btnW, 26, TRUE);
+    MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, 26, TRUE);
+    y += 30;
 
     MoveWindow(g_editFiles, x, y, w, 120, TRUE);
     y += 120 + gap;
 
-    MoveWindow(g_staticSheets, x, y + 5, labelW, 20, TRUE);
+    MoveWindow(g_staticSheets, x, y + 4, labelW, 20, TRUE);
     MoveWindow(g_editSheets, x + labelW, y, w - labelW, 52, TRUE);
     y += 56;
     MoveWindow(g_staticSheetsHint, x + labelW, y, w - labelW, 18, TRUE);
     y += 24;
 
-    MoveWindow(g_staticCopies, x, y + 5, labelW, 20, TRUE);
-    MoveWindow(g_editCopies, x + labelW, y, copiesW, rowH, TRUE);
-    MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y + 4, 120, 20, TRUE);
-    MoveWindow(g_btnPrint, x + w - btnW, y, btnW, rowH, TRUE);
-    y += rowH + gap;
+    MoveWindow(g_staticCopies, x, y + 4, labelW, 20, TRUE);
+    MoveWindow(g_editCopies, x + labelW, y, copiesW, 24, TRUE);
+    MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y, 90, 24, TRUE);
+    MoveWindow(g_chkUsePrintArea, x + labelW + copiesW + 110, y, 150, 24, TRUE);
+    MoveWindow(g_btnPrint, x + w - btnW, y - 1, btnW, 28, TRUE);
+    y += 34;
 
     MoveWindow(g_editLog, x, y, w, rc.bottom - y - margin, TRUE);
 }
@@ -508,10 +527,7 @@ void LayoutPage(HWND hwnd) {
 LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
-    {
         g_hwndPage = hwnd;
-
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
         g_staticFiles = CreateWindowW(L"STATIC", L"対象ブック",
             WS_CHILD | WS_VISIBLE,
@@ -554,44 +570,26 @@ LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_PREVIEW, g_hInst, nullptr);
 
+        g_chkUsePrintArea = CreateWindowW(L"BUTTON", L"PrintArea を使う",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_USE_PRINTAREA, g_hInst, nullptr);
+
         g_btnPrint = CreateWindowW(L"BUTTON", L"印刷",
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
             0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
 
+        SendMessageW(g_chkUsePrintArea, BM_SETCHECK, BST_CHECKED, 0);
+
         g_editLog = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
-            L"ブック内に存在するシートのみ印刷します。\r\n存在しないシートはスキップします。\r\n",
+            L"ブック内に存在するシートのみ印刷します。\r\n存在しないシートはスキップします。\r\nPrintArea を使う/無視するは下のチェックで切り替えます。\r\n",
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_LOG, g_hInst, nullptr);
 
-        SendMessageW(g_staticFiles, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_editFiles, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_btnAddFiles, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_btnClearFiles, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_staticSheets, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_editSheets, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_staticSheetsHint, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_staticCopies, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_editCopies, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_chkPreview, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_btnPrint, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(g_editLog, WM_SETFONT, (WPARAM)hFont, TRUE);
-
         LayoutPage(hwnd);
-        InvalidateRect(hwnd, nullptr, TRUE);
-        return 0;
-    }
-
-    case WM_SHOWWINDOW:
-        if (wParam) {
-            LayoutPage(hwnd);
-            InvalidateRect(hwnd, nullptr, TRUE);
-            UpdateWindow(hwnd);
-        }
         return 0;
 
     case WM_SIZE:
         LayoutPage(hwnd);
-        InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
 
     case WM_COMMAND:
@@ -613,7 +611,7 @@ LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         case IDC_BTN_CLEAR_FILES:
             g_files.clear();
             RefreshFileList();
-            AddLog(L"File list cleared.");
+            AddLog(L"一覧をクリアしました。");
             return 0;
 
         case IDC_BTN_PRINT:
@@ -626,7 +624,7 @@ LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// namespace
+} // namespace
 
 bool RegisterPrintToolPageClass(HINSTANCE hInstance) {
     g_hInst = hInstance;
@@ -636,7 +634,7 @@ bool RegisterPrintToolPageClass(HINSTANCE hInstance) {
     wc.hInstance = hInstance;
     wc.lpszClassName = L"PrintToolPageWindow";
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
 
     return RegisterClassW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
@@ -659,16 +657,22 @@ HWND CreatePrintToolPage(HWND parent, HINSTANCE hInstance, const RECT& rc) {
 void PrintToolPage_SetVisible(HWND hwnd, bool visible) {
     if (!hwnd) return;
     ShowWindow(hwnd, visible ? SW_SHOW : SW_HIDE);
-    if (visible) {
-        LayoutPage(hwnd);
-        InvalidateRect(hwnd, nullptr, TRUE);
-        UpdateWindow(hwnd);
-    }
 }
 
 void PrintToolPage_Resize(HWND hwnd, const RECT& rc) {
     if (!hwnd) return;
     MoveWindow(hwnd, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, TRUE);
-    LayoutPage(hwnd);
-    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+void PrintToolPage_SetFiles(const std::vector<std::wstring>& files) {
+    g_files = files;
+
+    std::sort(g_files.begin(), g_files.end());
+    g_files.erase(std::unique(g_files.begin(), g_files.end()), g_files.end());
+
+    RefreshFileList();
+
+    if (g_editLog) {
+        AddLog(L"検索結果を印刷対象一覧へ反映しました。");
+    }
 }
