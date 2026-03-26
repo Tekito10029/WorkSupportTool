@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="WorkSupportTool/WorkSupportTool.vcxproj" Id="44897066-721f-457c-be1a-ceff142cd642" />
+</Solution>
