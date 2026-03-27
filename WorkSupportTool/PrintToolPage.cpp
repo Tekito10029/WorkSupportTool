@@ -32,7 +32,6 @@ namespace {
         IDC_STATIC_FILES = 5001,
         IDC_EDIT_FILES,
         IDC_BTN_ADD_FILES,
-        IDC_BTN_REMOVE_FILE,
         IDC_BTN_CLEAR_FILES,
 
         IDC_STATIC_SHEETS,
@@ -66,7 +65,6 @@ namespace {
     HWND g_staticFiles = nullptr;
     HWND g_editFiles = nullptr;
     HWND g_btnAddFiles = nullptr;
-    HWND g_btnRemoveFile = nullptr;
     HWND g_btnClearFiles = nullptr;
 
     HWND g_staticSheets = nullptr;
@@ -92,6 +90,7 @@ namespace {
     std::vector<PrinterInfo> g_printers;
     std::wstring g_selectedPrinter;
     HGLOBAL g_hDevMode = nullptr;
+    HGLOBAL g_hDevNames = nullptr;
 
     std::wstring GetExeDir() {
         wchar_t buf[MAX_PATH * 4]{};
@@ -119,28 +118,6 @@ namespace {
             if (i + 1 < g_files.size()) ss << L"\r\n";
         }
         SetWindowTextW(g_editFiles, ss.str().c_str());
-    }
-
-
-    int GetCurrentFileLineIndex() {
-        if (!g_editFiles) return -1;
-        DWORD startPos = 0;
-        DWORD endPos = 0;
-        SendMessageW(g_editFiles, EM_GETSEL, (WPARAM)&startPos, (LPARAM)&endPos);
-        return (int)SendMessageW(g_editFiles, EM_LINEFROMCHAR, startPos, 0);
-    }
-
-    void RemoveCurrentFileLine() {
-        int idx = GetCurrentFileLineIndex();
-        if (idx < 0 || idx >= (int)g_files.size()) {
-            MessageBoxW(g_hwndPage, L"削除する項目の行にカーソルを置いてください。", L"印刷ツール", MB_OK | MB_ICONINFORMATION);
-            return;
-        }
-
-        std::wstring removed = g_files[(size_t)idx];
-        g_files.erase(g_files.begin() + idx);
-        RefreshFileList();
-        AddLog(L"削除: " + removed);
     }
 
     std::wstring Trim(const std::wstring& s) {
@@ -564,7 +541,15 @@ namespace {
         return g_selectedPrinter;
     }
 
+    bool ShowWorksheetPrintPreview(IDispatch* ws) {
+        return CallMethod(ws, L"PrintPreview");
+    }
+
     bool PrintWorksheet(IDispatch* ws, int copies, bool preview, const std::wstring& activePrinter) {
+        if (preview) {
+            return ShowWorksheetPrintPreview(ws);
+        }
+
         VARIANT vFrom, vTo, vCopies, vPreview, vActivePrinter;
         VariantInit(&vFrom); VariantInit(&vTo); VariantInit(&vCopies); VariantInit(&vPreview); VariantInit(&vActivePrinter);
 
@@ -575,7 +560,7 @@ namespace {
         vCopies.lVal = copies;
 
         vPreview.vt = VT_BOOL;
-        vPreview.boolVal = preview ? VARIANT_TRUE : VARIANT_FALSE;
+        vPreview.boolVal = VARIANT_FALSE;
 
         if (!activePrinter.empty()) {
             vActivePrinter.vt = VT_BSTR;
@@ -612,7 +597,7 @@ namespace {
             return false;
         }
 
-        SetBoolProperty(app, L"Visible", false);
+        SetBoolProperty(app, L"Visible", preview);
         SetBoolProperty(app, L"DisplayAlerts", false);
 
         std::wstring activePrinter = BuildActivePrinterString();
@@ -708,7 +693,26 @@ namespace {
         return !printed.empty();
     }
 
-    void DoPrint() {
+    
+void ShowPrintSetupDialog() {
+    PRINTDLGW pd{};
+    pd.lStructSize = sizeof(pd);
+    pd.hwndOwner = g_hwndPage;
+    pd.Flags = PD_PRINTSETUP | PD_USEDEVMODECOPIESANDCOLLATE;
+
+    if (g_hDevMode) pd.hDevMode = g_hDevMode;
+    if (g_hDevNames) pd.hDevNames = g_hDevNames;
+
+    if (PrintDlgW(&pd)) {
+        if (g_hDevMode && g_hDevMode != pd.hDevMode) GlobalFree(g_hDevMode);
+        if (g_hDevNames && g_hDevNames != pd.hDevNames) GlobalFree(g_hDevNames);
+        g_hDevMode = pd.hDevMode;
+        g_hDevNames = pd.hDevNames;
+        AddLog(L"印刷設定を更新しました。");
+    }
+}
+
+void DoPrint() {
         if (g_files.empty()) {
             MessageBoxW(g_hwndPage, L"先にExcelブックを追加してください。", L"印刷ツール", MB_ICONWARNING);
             return;
@@ -727,7 +731,11 @@ namespace {
         const int copies = GetCopies();
         const bool preview = GetCheck(g_chkPreview);
 
-        AddLog(L"印刷を開始します...");
+        if (preview) {
+            AddLog(L"印刷プレビューを開きます。プレビュー画面で印刷またはキャンセルを選択してください。");
+        } else {
+            AddLog(L"印刷を開始します...");
+        }
 
         for (const auto& file : g_files) {
             std::wstring msg;
@@ -760,8 +768,7 @@ namespace {
         int w = rc.right - rc.left - margin * 2;
 
         MoveWindow(g_staticFiles, x, y + 4, labelW, 20, TRUE);
-        MoveWindow(g_btnAddFiles, x + w - btnW * 3 - gap * 2, y, btnW, rowH, TRUE);
-        MoveWindow(g_btnRemoveFile, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
+        MoveWindow(g_btnAddFiles, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
         MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
         y += rowH + gap;
 
@@ -807,8 +814,6 @@ namespace {
                 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FILES, g_hInst, nullptr);
             g_btnAddFiles = CreateWindowW(L"BUTTON", L"ファイル追加...",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FILES, g_hInst, nullptr);
-            g_btnRemoveFile = CreateWindowW(L"BUTTON", L"項目削除",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FILE, g_hInst, nullptr);
             g_btnClearFiles = CreateWindowW(L"BUTTON", L"一覧クリア",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CLEAR_FILES, g_hInst, nullptr);
 
@@ -852,7 +857,7 @@ namespace {
                 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_LOG, g_hInst, nullptr);
 
             HWND controls[] = {
-                g_staticFiles, g_editFiles, g_btnAddFiles, g_btnRemoveFile, g_btnClearFiles,
+                g_staticFiles, g_editFiles, g_btnAddFiles, g_btnClearFiles,
                 g_staticSheets, g_editSheets, g_staticSheetsHint, g_btnSaveSheetSet,
                 g_staticCopies, g_editCopies, g_chkPreview,
                 g_staticPrinter, g_cmbPrinter, g_btnPrinterProp,
@@ -888,10 +893,6 @@ namespace {
                 }
                 return 0;
             }
-
-            case IDC_BTN_REMOVE_FILE:
-                RemoveCurrentFileLine();
-                return 0;
 
             case IDC_BTN_CLEAR_FILES:
                 g_files.clear();
