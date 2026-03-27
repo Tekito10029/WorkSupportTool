@@ -3138,22 +3138,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 
+// -------------------- Page exports --------------------
 std::vector<std::wstring> SearchToolPage_GetResultPaths() {
     std::vector<std::wstring> out;
     out.reserve(g_results.size());
-
-    for (const auto& it : g_results) {
-        if (!it) continue;
-        if (it->path.empty()) continue;
-        out.push_back(it->path);
+    for (const auto& hp : g_results) {
+        if (!hp) continue;
+        if (hp->path.empty()) continue;
+        out.push_back(hp->path);
     }
-
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
 }
 
-// -------------------- Page exports --------------------
 bool RegisterSearchToolPageClass(HINSTANCE hInstance) {
     g_hInst = hInstance;
 
@@ -3165,10 +3163,12 @@ bool RegisterSearchToolPageClass(HINSTANCE hInstance) {
     static bool s_registered = false;
     if (s_registered) return true;
 
+    const wchar_t CLASS_NAME[] = L"ExcelFinderAllInOneV5Page";
+
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = L"ExcelFinderAllInOneV5Page";
+    wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 

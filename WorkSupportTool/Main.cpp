@@ -54,14 +54,12 @@ void LayoutMain(HWND hwnd) {
 }
 
 void ApplyMainTab() {
-    const bool showSearch = (g_currentTab == 0);
-
-    if (!showSearch) {
+    const bool isSearch = (g_currentTab == 0);
+    if (!isSearch) {
         PrintToolPage_SetFiles(SearchToolPage_GetResultPaths());
     }
-
-    SearchToolPage_SetVisible(g_hwndSearchPage, showSearch);
-    PrintToolPage_SetVisible(g_hwndPrintPage, !showSearch);
+    SearchToolPage_SetVisible(g_hwndSearchPage, isSearch);
+    PrintToolPage_SetVisible(g_hwndPrintPage, !isSearch);
 }
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -128,7 +126,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     INITCOMMONCONTROLSEX icc{};
     icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_DATE_CLASSES | ICC_TAB_CLASSES;
+    icc.dwICC = ICC_WIN95_CLASSES | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS | ICC_DATE_CLASSES | ICC_TAB_CLASSES;
     InitCommonControlsEx(&icc);
 
     RegisterSearchToolPageClass(hInstance);

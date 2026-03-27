@@ -134,8 +134,8 @@
     <Image Include="WorkSupportTool.ico" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\..\Downloads\excel_tabbed_tool_clean_v3\excel_tabbed_tool_clean_v3\SearchToolPage.h" />
     <ClInclude Include="PrintToolPage.h" />
+    <ClInclude Include="SearchToolPage.h" />
   </ItemGroup>
   <ItemGroup>
     <Xml Include="app.manifest.xml" />
