@@ -30,9 +30,11 @@ namespace {
 
     enum : int {
         IDC_STATIC_FILES = 5001,
-        IDC_EDIT_FILES,
+        IDC_LIST_FILES,
         IDC_BTN_ADD_FILES,
+        IDC_BTN_REMOVE_FILE,
         IDC_BTN_CLEAR_FILES,
+        IDC_STATIC_REMOVE_TARGET,
 
         IDC_STATIC_SHEETS,
         IDC_EDIT_SHEETS,
@@ -63,9 +65,11 @@ namespace {
     HWND g_hwndPage = nullptr;
 
     HWND g_staticFiles = nullptr;
-    HWND g_editFiles = nullptr;
+    HWND g_listFiles = nullptr;
     HWND g_btnAddFiles = nullptr;
+    HWND g_btnRemoveFile = nullptr;
     HWND g_btnClearFiles = nullptr;
+    HWND g_staticRemoveTarget = nullptr;
 
     HWND g_staticSheets = nullptr;
     HWND g_editSheets = nullptr;
@@ -111,13 +115,51 @@ namespace {
     }
 
     void RefreshFileList() {
-        if (!g_editFiles) return;
-        std::wstringstream ss;
-        for (size_t i = 0; i < g_files.size(); ++i) {
-            ss << g_files[i];
-            if (i + 1 < g_files.size()) ss << L"\r\n";
+        if (!g_listFiles) return;
+        SendMessageW(g_listFiles, LB_RESETCONTENT, 0, 0);
+        for (const auto& f : g_files) {
+            SendMessageW(g_listFiles, LB_ADDSTRING, 0, (LPARAM)f.c_str());
         }
-        SetWindowTextW(g_editFiles, ss.str().c_str());
+    }
+
+
+    int GetCurrentFileLineIndex() {
+        if (!g_listFiles) return -1;
+        int sel = (int)SendMessageW(g_listFiles, LB_GETCURSEL, 0, 0);
+        return (sel == LB_ERR) ? -1 : sel;
+    }
+
+
+    void UpdateRemoveTargetLabel() {
+        if (!g_staticRemoveTarget) return;
+
+        int idx = GetCurrentFileLineIndex();
+        if (idx < 0 || idx >= (int)g_files.size()) {
+            SetWindowTextW(g_staticRemoveTarget, L"削除対象: なし");
+            return;
+        }
+
+        std::wstring text = L"削除対象: " + g_files[(size_t)idx];
+        SetWindowTextW(g_staticRemoveTarget, text.c_str());
+    }
+
+    void RemoveCurrentFileLine() {
+        int idx = GetCurrentFileLineIndex();
+        if (idx < 0 || idx >= (int)g_files.size()) {
+            MessageBoxW(g_hwndPage, L"削除したい行にカーソルを置いてください。", L"印刷ツール", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+
+        std::wstring removed = g_files[(size_t)idx];
+        g_files.erase(g_files.begin() + idx);
+        RefreshFileList();
+        if (g_listFiles && !g_files.empty()) {
+            int newSel = idx;
+            if (newSel >= (int)g_files.size()) newSel = (int)g_files.size() - 1;
+            SendMessageW(g_listFiles, LB_SETCURSEL, (WPARAM)newSel, 0);
+        }
+        UpdateRemoveTargetLabel();
+        AddLog(L"削除: " + removed);
     }
 
     std::wstring Trim(const std::wstring& s) {
@@ -768,11 +810,15 @@ void DoPrint() {
         int w = rc.right - rc.left - margin * 2;
 
         MoveWindow(g_staticFiles, x, y + 4, labelW, 20, TRUE);
-        MoveWindow(g_btnAddFiles, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
+        MoveWindow(g_btnAddFiles, x + w - btnW * 3 - gap * 2, y, btnW, rowH, TRUE);
+        MoveWindow(g_btnRemoveFile, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
         MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
-        y += rowH + gap;
+        y += rowH + 4;
 
-        MoveWindow(g_editFiles, x, y, w, 120, TRUE);
+        MoveWindow(g_staticRemoveTarget, x, y, w, 18, TRUE);
+        y += 18 + 4;
+
+        MoveWindow(g_listFiles, x, y, w, 120, TRUE);
         y += 120 + gap;
 
         MoveWindow(g_staticSheets, x, y + 4, labelW, 20, TRUE);
@@ -809,13 +855,17 @@ void DoPrint() {
 
             g_staticFiles = CreateWindowW(L"STATIC", L"対象ブック",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
-            g_editFiles = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-                0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FILES, g_hInst, nullptr);
+            g_listFiles = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
+                0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FILES, g_hInst, nullptr);
             g_btnAddFiles = CreateWindowW(L"BUTTON", L"ファイル追加...",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FILES, g_hInst, nullptr);
+            g_btnRemoveFile = CreateWindowW(L"BUTTON", L"項目削除",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FILE, g_hInst, nullptr);
             g_btnClearFiles = CreateWindowW(L"BUTTON", L"一覧クリア",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CLEAR_FILES, g_hInst, nullptr);
+            g_staticRemoveTarget = CreateWindowW(L"STATIC", L"削除対象: なし",
+                WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_REMOVE_TARGET, g_hInst, nullptr);
 
             g_staticSheets = CreateWindowW(L"STATIC", L"印刷シート名",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_SHEETS, g_hInst, nullptr);
@@ -857,7 +907,7 @@ void DoPrint() {
                 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_LOG, g_hInst, nullptr);
 
             HWND controls[] = {
-                g_staticFiles, g_editFiles, g_btnAddFiles, g_btnClearFiles,
+                g_staticFiles, g_listFiles, g_btnAddFiles, g_btnRemoveFile, g_btnClearFiles, g_staticRemoveTarget,
                 g_staticSheets, g_editSheets, g_staticSheetsHint, g_btnSaveSheetSet,
                 g_staticCopies, g_editCopies, g_chkPreview,
                 g_staticPrinter, g_cmbPrinter, g_btnPrinterProp,
@@ -870,6 +920,7 @@ void DoPrint() {
             RefreshPrinterCombo();
             LoadSheetSettings();
             LayoutPage(hwnd);
+            UpdateRemoveTargetLabel();
             return 0;
         }
 
@@ -889,14 +940,23 @@ void DoPrint() {
                         }
                     }
                     RefreshFileList();
+                    if (g_listFiles && !g_files.empty()) {
+                        SendMessageW(g_listFiles, LB_SETCURSEL, (WPARAM)(g_files.size() - 1), 0);
+                    }
+                    UpdateRemoveTargetLabel();
                     AddLog(L"ファイルを追加しました。");
                 }
                 return 0;
             }
 
+            case IDC_BTN_REMOVE_FILE:
+                RemoveCurrentFileLine();
+                return 0;
+
             case IDC_BTN_CLEAR_FILES:
                 g_files.clear();
                 RefreshFileList();
+                UpdateRemoveTargetLabel();
                 AddLog(L"一覧をクリアしました。");
                 return 0;
 
@@ -906,6 +966,12 @@ void DoPrint() {
 
             case IDC_BTN_PRINTER_PROP:
                 ShowPrinterProperties();
+                return 0;
+
+            case IDC_LIST_FILES:
+                if (HIWORD(wParam) == LBN_SELCHANGE) {
+                    UpdateRemoveTargetLabel();
+                }
                 return 0;
 
             case IDC_BTN_PRINT:
@@ -952,6 +1018,7 @@ void PrintToolPage_SetFiles(const std::vector<std::wstring>& files) {
     std::sort(g_files.begin(), g_files.end());
     g_files.erase(std::unique(g_files.begin(), g_files.end()), g_files.end());
     RefreshFileList();
+    UpdateRemoveTargetLabel();
     AddLog(L"検索結果を印刷対象一覧へ反映しました。");
 }
 

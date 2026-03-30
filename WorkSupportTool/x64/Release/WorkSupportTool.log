@@ -1,7 +1,8 @@
-﻿  PrintToolPage.cpp
+﻿  Main.cpp
+  PrintToolPage.cpp
+  SearchToolPage.cpp
   コード生成しています。
-  39 of 1833 functions ( 2.1%) were compiled, the rest were copied from previous compilation.
-    1 functions were new in current compilation
-    18 functions had inline decision re-evaluated but remain unchanged
+  Previous IPDB not found, fall back to full compilation.
+  All 1836 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
   コード生成が終了しました。
   WorkSupportTool.vcxproj -> C:\Users\seizou124\Documents\GitHub\WorkSupportTool\x64\Release\WorkSupportTool.exe
