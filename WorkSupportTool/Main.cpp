@@ -29,7 +29,7 @@ RECT GetPageRect(HWND hwnd) {
     GetClientRect(hwnd, &rc);
 
     const int padding = 10;
-    const int tabH = 36;
+    const int tabH = 38;
 
     RECT page{
         padding,
@@ -88,7 +88,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ti.pszText = const_cast<LPWSTR>(L"印刷ツール");
         TabCtrl_InsertItem(g_tabMain, 1, &ti);
         TabCtrl_SetCurSel(g_tabMain, 0);
-        TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(110, 28));
+        //TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(110, 28));
+        //TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(110, 28));
 
         RECT page = GetPageRect(hwnd);
         g_hwndSearchPage = CreateSearchToolPage(hwnd, g_hInst, page);

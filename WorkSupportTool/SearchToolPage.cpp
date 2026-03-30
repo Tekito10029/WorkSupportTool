@@ -1881,9 +1881,9 @@ static void DoLayout(HWND hwnd) {
 
     // ---- Left panel common (tab) ----
     int y = padding;
-    const int tabH = 40;
+    const int tabH = 36;
     MoveWindow(g_tabLeft, padding, y, max(160, w - padding * 2), tabH, TRUE);
-    TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(96, 30));
+    //TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(110, 28));
     y += tabH + gap;
 
     // ---- Left panel: Search tab ----
@@ -2627,6 +2627,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
+        HFONT hTabFont = CreateFontW(
+            -16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_cmbTimeBase, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -2645,7 +2649,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // Left panel tab (Search / Excludes)
         g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
-        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(hTabFont ? hTabFont : hUiFont), TRUE);
         {
             TCITEMW ti{};
             ti.mask = TCIF_TEXT;
@@ -2654,7 +2658,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
-            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(96, 30));
+            //TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(110, 28));
         }
 
         // Advanced frames (behind controls) - used to visually separate sections

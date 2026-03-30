@@ -806,13 +806,14 @@ void DoPrint() {
         const int btnW = 132;
         const int labelW = 100;
         const int copiesW = 68;
-        const int rowH = 36;
+        const int rowH = 38;
+        const int labelH = 30;
 
         int x = margin;
         int y = margin;
         int w = rc.right - rc.left - margin * 2;
 
-        MoveWindow(g_staticFiles, x, y + 5, labelW, 22, TRUE);
+        MoveWindow(g_staticFiles, x, y + 3, labelW, labelH, TRUE);
         MoveWindow(g_btnAddFiles, x + w - btnW * 3 - gap * 2, y, btnW, rowH, TRUE);
         MoveWindow(g_btnRemoveFile, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
         MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
@@ -824,25 +825,25 @@ void DoPrint() {
         MoveWindow(g_listFiles, x, y, w, 120, TRUE);
         y += 120 + gap;
 
-        MoveWindow(g_staticSheets, x, y + 4, labelW, 28, TRUE);
-        MoveWindow(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 58, TRUE);
+        MoveWindow(g_staticSheets, x, y + 2, labelW, labelH, TRUE);
+        MoveWindow(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 60, TRUE);
         MoveWindow(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH, TRUE);
-        y += 62;
-        MoveWindow(g_staticSheetsHint, x + labelW, y, w - labelW, 24, TRUE);
+        y += 64;
+        MoveWindow(g_staticSheetsHint, x + labelW, y, w - labelW, 28, TRUE);
         y += 28;
 
-        MoveWindow(g_staticCopies, x, y + 4, labelW, 28, TRUE);
-        MoveWindow(g_editCopies, x + labelW, y, copiesW, 34, TRUE);
-        MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y + 4, 130, 28, TRUE);
+        MoveWindow(g_staticCopies, x, y + 2, labelW, labelH, TRUE);
+        MoveWindow(g_editCopies, x + labelW, y, copiesW, 36, TRUE);
+        MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y + 2, 150, 32, TRUE);
         MoveWindow(g_btnPrint, x + w - btnW, y - 1, btnW, rowH + 6, TRUE);
         y += rowH + gap;
 
-        MoveWindow(g_staticPrinter, x, y + 6, labelW, 22, TRUE);
+        MoveWindow(g_staticPrinter, x, y + 3, labelW, labelH, TRUE);
         MoveWindow(g_cmbPrinter, x + labelW, y, w - labelW - btnW - gap, 400, TRUE);
         MoveWindow(g_btnPrinterProp, x + w - btnW, y, btnW, rowH, TRUE);
         y += rowH + gap;
 
-        MoveWindow(g_staticPaper, x, y + 6, labelW, 22, TRUE);
+        MoveWindow(g_staticPaper, x, y + 3, labelW, labelH, TRUE);
         MoveWindow(g_cmbPaper, x + labelW, y, w - labelW, 300, TRUE);
         y += rowH + gap;
 
