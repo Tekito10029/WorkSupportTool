@@ -90,6 +90,9 @@ namespace {
     HWND g_btnPrint = nullptr;
     HWND g_editLog = nullptr;
 
+    HFONT g_hFontUi = nullptr;
+    HFONT g_hFontUiBold = nullptr;
+
     std::vector<std::wstring> g_files;
     std::vector<PrinterInfo> g_printers;
     std::wstring g_selectedPrinter;
@@ -800,16 +803,16 @@ void DoPrint() {
 
         const int margin = 12;
         const int gap = 8;
-        const int btnW = 120;
-        const int labelW = 92;
-        const int copiesW = 60;
-        const int rowH = 28;
+        const int btnW = 132;
+        const int labelW = 100;
+        const int copiesW = 68;
+        const int rowH = 36;
 
         int x = margin;
         int y = margin;
         int w = rc.right - rc.left - margin * 2;
 
-        MoveWindow(g_staticFiles, x, y + 4, labelW, 20, TRUE);
+        MoveWindow(g_staticFiles, x, y + 5, labelW, 22, TRUE);
         MoveWindow(g_btnAddFiles, x + w - btnW * 3 - gap * 2, y, btnW, rowH, TRUE);
         MoveWindow(g_btnRemoveFile, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
         MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
@@ -821,25 +824,25 @@ void DoPrint() {
         MoveWindow(g_listFiles, x, y, w, 120, TRUE);
         y += 120 + gap;
 
-        MoveWindow(g_staticSheets, x, y + 4, labelW, 20, TRUE);
-        MoveWindow(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 52, TRUE);
+        MoveWindow(g_staticSheets, x, y + 4, labelW, 28, TRUE);
+        MoveWindow(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 58, TRUE);
         MoveWindow(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH, TRUE);
-        y += 56;
-        MoveWindow(g_staticSheetsHint, x + labelW, y, w - labelW, 18, TRUE);
-        y += 24;
+        y += 62;
+        MoveWindow(g_staticSheetsHint, x + labelW, y, w - labelW, 24, TRUE);
+        y += 28;
 
-        MoveWindow(g_staticCopies, x, y + 5, labelW, 20, TRUE);
-        MoveWindow(g_editCopies, x + labelW, y, copiesW, rowH, TRUE);
-        MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y + 4, 90, 20, TRUE);
-        MoveWindow(g_btnPrint, x + w - btnW, y, btnW, rowH, TRUE);
+        MoveWindow(g_staticCopies, x, y + 4, labelW, 28, TRUE);
+        MoveWindow(g_editCopies, x + labelW, y, copiesW, 34, TRUE);
+        MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y + 4, 130, 28, TRUE);
+        MoveWindow(g_btnPrint, x + w - btnW, y - 1, btnW, rowH + 6, TRUE);
         y += rowH + gap;
 
-        MoveWindow(g_staticPrinter, x, y + 5, labelW, 20, TRUE);
+        MoveWindow(g_staticPrinter, x, y + 6, labelW, 22, TRUE);
         MoveWindow(g_cmbPrinter, x + labelW, y, w - labelW - btnW - gap, 400, TRUE);
         MoveWindow(g_btnPrinterProp, x + w - btnW, y, btnW, rowH, TRUE);
         y += rowH + gap;
 
-        MoveWindow(g_staticPaper, x, y + 5, labelW, 20, TRUE);
+        MoveWindow(g_staticPaper, x, y + 6, labelW, 22, TRUE);
         MoveWindow(g_cmbPaper, x + labelW, y, w - labelW, 300, TRUE);
         y += rowH + gap;
 
@@ -851,7 +854,22 @@ void DoPrint() {
         case WM_CREATE:
         {
             g_hwndPage = hwnd;
-            HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
+            if (!g_hFontUi) {
+                g_hFontUi = CreateFontW(
+                    -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                    DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+            }
+            if (!g_hFontUiBold) {
+                g_hFontUiBold = CreateFontW(
+                    -20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                    DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+            }
+
+            HFONT hFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+            HFONT hFontBold = g_hFontUiBold ? g_hFontUiBold : hFont;
 
             g_staticFiles = CreateWindowW(L"STATIC", L"対象ブック",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
@@ -899,7 +917,7 @@ void DoPrint() {
                 WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PAPER, g_hInst, nullptr);
 
-            g_btnPrint = CreateWindowW(L"BUTTON", L"印刷",
+            g_btnPrint = CreateWindowW(L"BUTTON", L"▶ 印刷を実行",
                 WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
             g_editLog = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
                 L"ブック内に存在するシートのみ印刷します。\r\n存在しないシートはスキップします。\r\n",
@@ -916,6 +934,7 @@ void DoPrint() {
             for (HWND h : controls) {
                 SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
             }
+            SendMessageW(g_btnPrint, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
             RefreshPrinterCombo();
             LoadSheetSettings();
@@ -1004,6 +1023,14 @@ void DoPrint() {
         case WM_DESTROY:
             SaveSheetSettings();
             FreeDevMode();
+            if (g_hFontUi) {
+                DeleteObject(g_hFontUi);
+                g_hFontUi = nullptr;
+            }
+            if (g_hFontUiBold) {
+                DeleteObject(g_hFontUiBold);
+                g_hFontUiBold = nullptr;
+            }
             return 0;
         }
 

@@ -175,6 +175,9 @@ enum class TimeBase { LastWrite = 0, Creation = 1, Either = 2 };
 static HINSTANCE g_hInst = nullptr;
 static HWND g_hwndMain = nullptr;
 
+static HFONT g_hFontUi = nullptr;
+static HFONT g_hFontUiBold = nullptr;
+
 static HWND g_tabLeft = nullptr;
 static int  g_leftTab = 0; // 0: 検索, 1: 除外
 
@@ -1846,12 +1849,13 @@ static void DoLayout(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
-    const int padding = 10;
-    const int rowH = 28;
-    const int btnH = 28;
-    const int comboDropH = 220;
-    const int dtpH = max(rowH, 24);
+    const int padding = 12;
+    const int rowH = 38;
+    const int btnH = 38;
+    const int comboDropH = 260;
+    const int dtpH = max(rowH, 32);
     const int gap = 8;
+    const int labelH = 28;
 
     int winW = rc.right - rc.left;
     int winH = rc.bottom - rc.top;
@@ -1861,8 +1865,8 @@ static void DoLayout(HWND hwnd) {
     const int maxBottom = (winH - statusH - padding);
 
     // Two-column layout: left = controls, right = results list
-    int minRightW = 420;
-    int leftW = 520;
+    int minRightW = 440;
+    int leftW = 560;
     if (winW < leftW + minRightW + padding * 3) {
         leftW = max(320, winW - (minRightW + padding * 3));
     }
@@ -1877,23 +1881,24 @@ static void DoLayout(HWND hwnd) {
 
     // ---- Left panel common (tab) ----
     int y = padding;
-    const int tabH = 28;
+    const int tabH = 40;
     MoveWindow(g_tabLeft, padding, y, max(160, w - padding * 2), tabH, TRUE);
+    TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(96, 30));
     y += tabH + gap;
 
     // ---- Left panel: Search tab ----
     if (g_leftTab == 0) {
         // Root header
-        int labelW = 70;
+        int labelW = 82;
         int hintW = w - (padding * 2 + labelW);
         hintW = max(80, hintW);
-        MoveWindow(g_staticRoot, padding, y + 5, labelW, 20, TRUE);
-        MoveWindow(g_staticRootsHint, padding + labelW, y + 5, hintW, 20, TRUE);
+        MoveWindow(g_staticRoot, padding, y + 4, labelW, labelH, TRUE);
+        MoveWindow(g_staticRootsHint, padding + labelW, y + 4, hintW, labelH, TRUE);
         y += rowH + gap;
 
         // Roots list + buttons
-        int rootListH = max(90, rowH * 4 + gap * 3);
-        int btnColW = 90;
+        int rootListH = max(112, rowH * 4 + gap * 3);
+        int btnColW = 112;
         int rootListX = padding;
         int btnX = leftBoundary - btnColW;
         int rootListW = btnX - rootListX - padding;
@@ -1907,35 +1912,35 @@ static void DoLayout(HWND hwnd) {
         y += rootListH + gap;
 
         // Calendar row
-        int calLabelW = 50;
-        int calW = 140;
+        int calLabelW = 56;
+        int calW = 150;
         int calGap = 12;
 
-        MoveWindow(g_staticFrom, padding, y + 5, calLabelW, 20, TRUE);
+        MoveWindow(g_staticFrom, padding, y + 4, calLabelW, labelH, TRUE);
         MoveWindow(g_dtpFrom, padding + calLabelW, y, calW, dtpH, TRUE);
 
         int x2 = padding + calLabelW + calW + calGap;
-        MoveWindow(g_staticTo, x2, y + 5, calLabelW, 20, TRUE);
+        MoveWindow(g_staticTo, x2, y + 4, calLabelW, labelH, TRUE);
         MoveWindow(g_dtpTo, x2 + calLabelW, y, calW, dtpH, TRUE);
 
         y += rowH + padding;
 
         // Mode / Days / TimeBase (responsive)
-        int modeLabelW = 70;
-        int modeComboW = 200;
-        int daysLabelW = 70;
-        int daysEditW = 70;
-        int tbLabelW = 70;
-        int tbComboW = 160;
+        int modeLabelW = 82;
+        int modeComboW = 214;
+        int daysLabelW = 82;
+        int daysEditW = 76;
+        int tbLabelW = 82;
+        int tbComboW = 180;
 
         int leftMaxX = w - padding;
 
-        MoveWindow(g_staticMode, padding, y + 5, modeLabelW, 20, TRUE);
+        MoveWindow(g_staticMode, padding, y + 4, modeLabelW, labelH, TRUE);
         MoveWindow(g_cmbMode, padding + modeLabelW, y, modeComboW, comboDropH, TRUE);
 
         int x = padding + modeLabelW + modeComboW + padding;
 
-        MoveWindow(g_staticDays, x, y + 5, daysLabelW, 20, TRUE);
+        MoveWindow(g_staticDays, x, y + 4, daysLabelW, labelH, TRUE);
         MoveWindow(g_editDays, x + daysLabelW, y, daysEditW, rowH, TRUE);
         x += daysLabelW + daysEditW + padding;
 
@@ -1947,7 +1952,7 @@ static void DoLayout(HWND hwnd) {
         }
         int avail = leftMaxX - (x + tbLabelW);
         tbComboW = max(120, min(tbComboW, avail));
-        MoveWindow(g_staticTimeBase, x, y + 5, tbLabelW, 20, TRUE);
+        MoveWindow(g_staticTimeBase, x, y + 4, tbLabelW, labelH, TRUE);
         MoveWindow(g_cmbTimeBase, x + tbLabelW, y, tbComboW, comboDropH, TRUE);
         y += rowH + padding;
         // Name-exclude option (判定に拡張子を含める)
@@ -1955,18 +1960,16 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_chkNameIncludeExt, padding, y, max(220, w - padding * 2), rowH, TRUE);
         y += rowH + gap;
 
-
-
         // Extensions group (kept in Search tab)
-        int extH = 62;
+        int extH = 88;
         int extW = w - padding * 2;
         HWND hExtGrp = GetDlgItem(hwnd, IDC_GRP_EXT);
         if (hExtGrp) MoveWindow(hExtGrp, padding, y, extW, extH, TRUE);
 
         int innerX = padding + 12;
-        int innerY = y + 22;
+        int innerY = y + 30;
         int extColW = max(160, (extW - 24) / 3);
-        int lineH = 18;
+        int lineH = 28;
 
         MoveWindow(g_chkXls, innerX + extColW * 0, innerY + lineH * 0, extColW, lineH, TRUE);
         MoveWindow(g_chkXlsx, innerX + extColW * 1, innerY + lineH * 0, extColW, lineH, TRUE);
@@ -1991,18 +1994,18 @@ static void DoLayout(HWND hwnd) {
         int folderListH = min(160, max(minFolderListH, (varTotal * 2) / 3));
         int nameListHVar = min(140, max(minNameListH, varTotal - folderListH));
 
-        const int gbTitleH = 18;
-        const int gbBottomPad = 10;
+        const int gbTitleH = 24;
+        const int gbBottomPad = 12;
 
         // -------- Folder exclude group --------
         int folderGBTop = y;
         int fx = padding - 4;
         int fw = (w - padding * 2) + 8;
 
-        y = folderGBTop + gbTitleH;
+        y = folderGBTop + gbTitleH + 6;
 
         // Header row (similar to file-name exclude: checkbox + action buttons aligned)
-        MoveWindow(g_staticExclFolder, padding, y + 5, 120, 20, TRUE);
+        MoveWindow(g_staticExclFolder, padding, y + 4, 140, labelH, TRUE);
 
         // Place [フォルダ追加][削除] on the right to keep the section structure consistent.
         int hdrBtnW = 110;
@@ -2017,7 +2020,7 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_btnAddExclFolder, hdrBtnX1, y, hdrBtnW, rowH, TRUE);
         MoveWindow(g_btnRemoveExcl, hdrBtnX2, y, hdrBtnW, rowH, TRUE);
 
-        int chkX0 = padding + 120;
+        int chkX0 = padding + 140;
         int chkW0 = hdrBtnX1 - gap - chkX0;
         chkW0 = min(260, max(160, chkW0));
         MoveWindow(g_chkEnableFolderExcl, chkX0, y, chkW0, rowH, TRUE);
@@ -2049,7 +2052,7 @@ static void DoLayout(HWND hwnd) {
         }// Pattern input (match file-name exclude style):
 //  - Title line (static)
 //  - Next line: edit + [追加] button
-        MoveWindow(g_staticExclPattern, padding, y + 5, w - padding * 2, 20, TRUE);
+        MoveWindow(g_staticExclPattern, padding, y + 4, w - padding * 2, labelH, TRUE);
         y += rowH + gap;
 
         int bW_pat = 110;
@@ -2066,7 +2069,8 @@ static void DoLayout(HWND hwnd) {
             int bw2 = max(90, (w - padding * 2));
             MoveWindow(g_btnAddPattern, padding, y, bw2, rowH, TRUE);
             y += rowH + gbBottomPad;
-        }int folderGBBottom = y + gbBottomPad;
+}
+        int folderGBBottom = y + gbBottomPad;
         MoveWindow(g_frameFolderExcl, fx, folderGBTop, fw, max(60, folderGBBottom - folderGBTop), TRUE);
         SetWindowPos(g_frameFolderExcl, HWND_BOTTOM, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -2075,10 +2079,10 @@ static void DoLayout(HWND hwnd) {
 
         // -------- File name exclude group --------
         int nameGBTop = y;
-        y = nameGBTop + gbTitleH;
+        y = nameGBTop + gbTitleH + 6;
         // Header row (checkbox)
-        MoveWindow(g_staticExclName, padding, y + 5, 120, 20, TRUE);
-        int chkX = padding + 120;
+        MoveWindow(g_staticExclName, padding, y + 4, 140, labelH, TRUE);
+        int chkX = padding + 140;
         int leftMaxX2 = w - padding;
         int avail2 = leftMaxX2 - chkX;
         int chk1W = min(260, max(160, avail2));
@@ -2140,7 +2144,7 @@ static void DoLayout(HWND hwnd) {
     int yR = padding;
 
     // Action buttons row
-    int bw = 120;
+    int bw = 132;
     int totalW = bw * 3 + gap * 2;
     if (rightW < totalW) bw = max(90, (rightW - gap * 2) / 3);
 
@@ -2150,13 +2154,13 @@ static void DoLayout(HWND hwnd) {
     yR += btnH + gap;
 
     // Progress
-    int progH = 18;
+    int progH = 20;
     MoveWindow(g_progress, rightX, yR, max(80, rightW), progH, TRUE);
     yR += progH + gap;
 
     // Filter
-    int filterLabelW = 80;
-    MoveWindow(g_staticFilter, rightX, yR + 5, filterLabelW, 20, TRUE);
+    int filterLabelW = 90;
+    MoveWindow(g_staticFilter, rightX, yR + 4, filterLabelW, labelH, TRUE);
     MoveWindow(g_editFilter, rightX + filterLabelW, yR, rightW - filterLabelW, rowH, TRUE);
     yR += rowH + padding;
 
@@ -2608,7 +2612,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_dtpTo = CreateWindowW(DATETIMEPICK_CLASSW, L"", WS_CHILD | WS_VISIBLE | DTS_SHORTDATEFORMAT,
             0, 0, 0, 0, hwnd, (HMENU)IDC_DTP_TO, g_hInst, nullptr);
 
-        HFONT hUiFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        if (!g_hFontUi) {
+            g_hFontUi = CreateFontW(
+                -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        }
+        if (!g_hFontUiBold) {
+            g_hFontUiBold = CreateFontW(
+                -20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        }
+
+        HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_cmbTimeBase, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -2625,10 +2643,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         DateTime_SetSystemtime(g_dtpTo, GDT_VALID, &st);
 
         // Left panel tab (Search / Excludes)
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
-        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         {
             TCITEMW ti{};
             ti.mask = TCIF_TEXT;
@@ -2637,6 +2654,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
+            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(96, 30));
         }
 
         // Advanced frames (behind controls) - used to visually separate sections
@@ -2711,6 +2729,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         // Status
         g_status = CreateWindowW(STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, g_hInst, nullptr);
+
+        HWND controls[] = {
+            g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticFrom, g_staticTo, g_staticFilter,
+            g_staticExclFolder, g_staticExclPattern, g_staticExclName,
+            g_editRoot, g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown,
+            g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo, g_tabLeft,
+            g_frameFolderExcl, g_frameNameExcl,
+            g_chkEnableFolderExcl, g_listExcludes, g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
+            g_editExclPattern, g_btnAddPattern,
+            g_chkEnableNameExcl, g_chkNameIncludeExt, g_editFNamePattern, g_btnAddFName, g_btnRemoveFName, g_btnFNameUp, g_btnFNameDown, g_listFName, g_btnLoadFNameExcl, g_btnSaveFNameExcl,
+            GetDlgItem(hwnd, IDC_GRP_EXT), g_chkXls, g_chkXlsx, g_chkXlsm, g_chkXlsb, g_chkXltx, g_chkXltm,
+            g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_editFilter, g_listResults, g_status
+        };
+        for (HWND h : controls) {
+            if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+        }
+        SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
         // Paths: settings.ini / exclude.txt / results.csv are stored under LocalAppData to avoid server permission issues
         InitPaths();
@@ -3128,6 +3163,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_DESTROY:
         SaveSettings();
+        if (g_hFontUi) { DeleteObject(g_hFontUi); g_hFontUi = nullptr; }
+        if (g_hFontUiBold) { DeleteObject(g_hFontUiBold); g_hFontUiBold = nullptr; }
         if (GetParent(hwnd) == nullptr) {
             PostQuitMessage(0);
         }

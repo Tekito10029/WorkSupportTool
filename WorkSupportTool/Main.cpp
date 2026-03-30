@@ -22,13 +22,14 @@ HWND g_tabMain = nullptr;
 HWND g_hwndSearchPage = nullptr;
 HWND g_hwndPrintPage = nullptr;
 int g_currentTab = 0;
+HFONT g_hFontTab = nullptr;
 
 RECT GetPageRect(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
     const int padding = 10;
-    const int tabH = 28;
+    const int tabH = 36;
 
     RECT page{
         padding,
@@ -44,7 +45,7 @@ void LayoutMain(HWND hwnd) {
     GetClientRect(hwnd, &rc);
 
     const int padding = 10;
-    const int tabH = 28;
+    const int tabH = 36;
 
     MoveWindow(g_tabMain, padding, padding, max(300, rc.right - padding * 2), tabH, TRUE);
 
@@ -68,7 +69,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     {
         g_hwndMain = hwnd;
 
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        if (!g_hFontTab) {
+            g_hFontTab = CreateFontW(
+                -16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+        }
+        HFONT hFont = g_hFontTab ? g_hFontTab : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
         g_tabMain = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
@@ -81,6 +88,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ti.pszText = const_cast<LPWSTR>(L"印刷ツール");
         TabCtrl_InsertItem(g_tabMain, 1, &ti);
         TabCtrl_SetCurSel(g_tabMain, 0);
+        TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(110, 28));
 
         RECT page = GetPageRect(hwnd);
         g_hwndSearchPage = CreateSearchToolPage(hwnd, g_hInst, page);
@@ -109,6 +117,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_DESTROY:
+        if (g_hFontTab) { DeleteObject(g_hFontTab); g_hFontTab = nullptr; }
         PostQuitMessage(0);
         return 0;
     }
