@@ -813,16 +813,17 @@ void DoPrint() {
         int y = margin;
         int w = rc.right - rc.left - margin * 2;
 
-        MoveWindow(g_staticFiles, x, y + 3, labelW, labelH, TRUE);
+        MoveWindow(g_staticFiles, x, y, w, labelH, TRUE);
+        y += labelH + 4;
         MoveWindow(g_btnAddFiles, x + w - btnW * 3 - gap * 2, y, btnW, rowH, TRUE);
         MoveWindow(g_btnRemoveFile, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
         MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
         y += rowH + 4;
 
-        MoveWindow(g_staticRemoveTarget, x, y, w, 18, TRUE);
-        y += 18 + 4;
+        MoveWindow(g_staticRemoveTarget, x, y, w, labelH + 2, TRUE);
+        y += (labelH + 2) + 6;
 
-        MoveWindow(g_listFiles, x, y, w, 120, TRUE);
+        MoveWindow(g_listFiles, x, y, w, 140, TRUE);
         y += 120 + gap;
 
         MoveWindow(g_staticSheets, x, y + 2, labelW, labelH, TRUE);
