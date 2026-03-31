@@ -2707,7 +2707,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
         // Folder exclude controls
-        g_chkEnableFolderExcl = CreateWindowW(L"BUTTON", L"除外フォルダを有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        g_chkEnableFolderExcl = CreateWindowW(L"BUTTON", L"フォルダ除外を有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_ENABLE_FOLDER_EXCL, g_hInst, nullptr);
 
         g_listExcludes = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
