@@ -1067,11 +1067,29 @@ static void CommitFileNameEditIfNeeded()
 static LRESULT CALLBACK ExclEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_KEYDOWN) {
+        // 新しく入力を始めたら一覧選択を解除して「新規追加モード」にする
+        if ((wParam >= 0x30 && wParam <= 0x5A) ||
+            (wParam >= VK_NUMPAD0 && wParam <= VK_DIVIDE) ||
+            wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+            wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+            wParam == VK_OEM_7 || wParam == VK_OEM_MINUS || wParam == VK_OEM_PLUS ||
+            wParam == VK_SPACE || wParam == VK_BACK || wParam == VK_DELETE)
+        {
+            if (g_listExcludes) {
+                SendMessageW(g_listExcludes, LB_SETCURSEL, (WPARAM)-1, 0);
+            }
+        }
+
         if (wParam == VK_RETURN) {
+            int sel = g_listExcludes ? (int)SendMessageW(g_listExcludes, LB_GETCURSEL, 0, 0) : LB_ERR;
+            if (sel == LB_ERR) {
+                return 0;
+            }
+
             CommitExcludeEditIfNeeded();
-            // 余計なビープ防止
             return 0;
         }
+
         if (wParam == VK_ESCAPE) {
             int sel = (int)SendMessageW(g_listExcludes, LB_GETCURSEL, 0, 0);
             if (sel != LB_ERR && sel >= 0 && sel < (int)g_excludeRules.size()) {
@@ -1087,11 +1105,32 @@ static LRESULT CALLBACK ExclEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
 static LRESULT CALLBACK FNameEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_KEYDOWN) {
+        // 文字入力を始めたら、一覧の選択を外して「新規追加モード」にする
+        if ((wParam >= 0x30 && wParam <= 0x5A) ||   // 0-9, A-Z
+            (wParam >= VK_NUMPAD0 && wParam <= VK_DIVIDE) ||
+            wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+            wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+            wParam == VK_OEM_7 || wParam == VK_OEM_MINUS || wParam == VK_OEM_PLUS ||
+            wParam == VK_SPACE || wParam == VK_BACK || wParam == VK_DELETE)
+        {
+            if (g_listFName) {
+                SendMessageW(g_listFName, LB_SETCURSEL, (WPARAM)-1, 0);
+            }
+        }
+
         if (wParam == VK_RETURN) {
+            // 選択が無いなら更新せず、そのまま新規追加扱い
+            int sel = g_listFName ? (int)SendMessageW(g_listFName, LB_GETCURSEL, 0, 0) : LB_ERR;
+            if (sel == LB_ERR) {
+                return 0;
+            }
+
             CommitFileNameEditIfNeeded();
             return 0;
         }
+
         if (wParam == VK_ESCAPE) {
+            // ESCでは一覧選択があるときだけ元の値に戻す
             int sel = (int)SendMessageW(g_listFName, LB_GETCURSEL, 0, 0);
             if (sel != LB_ERR && sel >= 0 && sel < (int)g_fileNamePatterns.size()) {
                 SetWindowTextWStr(g_editFNamePattern, g_fileNamePatterns[(size_t)sel]);
@@ -2865,16 +2904,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (id == IDC_LIST_EXCLUDES && (code == LBN_SELCHANGE || code == LBN_DBLCLK)) {
-            int sel = (int)SendMessageW(g_listExcludes, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR && sel >= 0 && sel < (int)g_excludeRules.size()) {
-                auto& r = g_excludeRules[(size_t)sel];
-                // どの種類でも編集欄に出す（[DIR] も直接更新できるように）
-                SetWindowTextWStr(g_editExclPattern, r.raw);
-                if (code == LBN_DBLCLK) {
-                    SetFocus(g_editExclPattern);
-                    SendMessageW(g_editExclPattern, EM_SETSEL, 0, -1);
-                }
-            }
             return 0;
         }
 
@@ -2942,16 +2971,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
 
-        // file name selection -> edit（ダブルクリックで編集欄へフォーカス）
+        // file name selection
         if (id == IDC_LIST_FNAME && (code == LBN_SELCHANGE || code == LBN_DBLCLK)) {
-            int sel = (int)SendMessageW(g_listFName, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR && sel >= 0 && sel < (int)g_fileNamePatterns.size()) {
-                SetWindowTextWStr(g_editFNamePattern, g_fileNamePatterns[(size_t)sel]);
-                if (code == LBN_DBLCLK) {
-                    SetFocus(g_editFNamePattern);
-                    SendMessageW(g_editFNamePattern, EM_SETSEL, 0, -1);
-                }
-            }
             return 0;
         }
 
