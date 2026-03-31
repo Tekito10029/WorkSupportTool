@@ -90,6 +90,8 @@ namespace {
     HWND g_btnPrint = nullptr;
     HWND g_editLog = nullptr;
 
+    HWND g_log = nullptr;
+
     HFONT g_hFontUi = nullptr;
     HFONT g_hFontUiBold = nullptr;
 
@@ -862,6 +864,9 @@ void LayoutPage(HWND hwnd) {
 
     D(g_staticPaper, x, y + 5, labelW, 22);
     D(g_cmbPaper, x + labelW, y, 180, 220);
+    y += rowH + gap;
+
+    D(g_log, x, y + 5, labelW, 22);
     D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
     y += rowH + gap;
 
@@ -945,6 +950,9 @@ void LayoutPage(HWND hwnd) {
 
             g_btnPrint = CreateWindowW(L"BUTTON", L"▶ 印刷を実行",
                 WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
+
+            g_log = CreateWindowW(L"STATIC", L"ログ",
+                WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
             g_editLog = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
                 L"ブック内に存在するシートのみ印刷します。\r\n存在しないシートはスキップします。\r\n",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
@@ -955,7 +963,7 @@ void LayoutPage(HWND hwnd) {
                 g_staticSheets, g_editSheets, g_staticSheetsHint, g_btnSaveSheetSet,
                 g_staticCopies, g_editCopies, g_chkPreview,
                 g_staticPrinter, g_cmbPrinter, g_btnPrinterProp,
-                g_staticPaper, g_cmbPaper, g_btnPrint, g_editLog
+                g_staticPaper, g_cmbPaper, g_btnPrint, g_editLog,g_log
             };
             for (HWND h : controls) {
                 SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
