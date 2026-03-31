@@ -20,6 +20,9 @@
 #include <string>
 #include <vector>
 
+#include <ShlObj.h>
+#include <filesystem>
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -109,7 +112,30 @@ namespace {
         return (pos == std::wstring::npos) ? L"." : p.substr(0, pos);
     }
 
-    std::wstring GetIniPath() { return GetExeDir() + L"\\WorkSupportTool_Print.ini"; }
+    namespace fs = std::filesystem;
+    std::wstring GetLocalAppDataPrintToolDir() {
+        PWSTR p = nullptr;
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p)) || !p) {
+            return L"";
+        }
+
+        std::wstring base(p);
+        CoTaskMemFree(p);
+
+        fs::path dir = fs::path(base) / L"ExcelToday";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+
+        return dir.wstring();
+    }
+
+    std::wstring GetIniPath() {
+        const std::wstring localDir = GetLocalAppDataPrintToolDir();
+        if (!localDir.empty()) {
+            return (fs::path(localDir) / L"WorkSupportTool_Print.ini").wstring();
+        }
+        return GetExeDir() + L"\\WorkSupportTool_Print.ini";
+    }
 
     void AddLog(const std::wstring& line) {
         if (!g_editLog) return;
@@ -1057,6 +1083,10 @@ void LayoutPage(HWND hwnd) {
         case WM_DESTROY:
             SaveSheetSettings();
             FreeDevMode();
+            if (g_hDevNames) {
+                GlobalFree(g_hDevNames);
+                g_hDevNames = nullptr;
+            }
             if (g_hFontUi) {
                 DeleteObject(g_hFontUi);
                 g_hFontUi = nullptr;

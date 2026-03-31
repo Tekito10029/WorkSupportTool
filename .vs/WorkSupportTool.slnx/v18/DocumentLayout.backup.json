@@ -34,8 +34,7 @@
               "RelativeToolTip": "WorkSupportTool\\Main.cpp",
               "ViewState": "AgIAAFQAAAAAAAAAAAAAAKQAAAAdAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-03-26T07:19:36.292Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-26T07:19:36.292Z"
             },
             {
               "$type": "Document",
@@ -55,9 +54,9 @@
               "Title": "PrintToolPage.cpp",
               "DocumentMoniker": "C:\\Users\\seizou124\\Documents\\GitHub\\WorkSupportTool\\WorkSupportTool\\PrintToolPage.cpp",
               "RelativeDocumentMoniker": "WorkSupportTool\\PrintToolPage.cpp",
-              "ToolTip": "C:\\Users\\seizou124\\Documents\\GitHub\\WorkSupportTool\\WorkSupportTool\\PrintToolPage.cpp",
-              "RelativeToolTip": "WorkSupportTool\\PrintToolPage.cpp",
-              "ViewState": "AgIAAMICAAAAAAAAAAAlwLoDAABkAAAAAAAAAA==",
+              "ToolTip": "C:\\Users\\seizou124\\Documents\\GitHub\\WorkSupportTool\\WorkSupportTool\\PrintToolPage.cpp*",
+              "RelativeToolTip": "WorkSupportTool\\PrintToolPage.cpp*",
+              "ViewState": "AgIAACkEAAAAAAAAAAAAAEkEAAAVAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-27T02:14:10.054Z",
               "EditorCaption": ""
