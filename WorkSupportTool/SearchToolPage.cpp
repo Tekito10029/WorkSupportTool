@@ -3227,7 +3227,7 @@ HWND CreateSearchToolPage(HWND parent, HINSTANCE hInstance, const RECT& rc) {
     return CreateWindowW(
         L"ExcelFinderAllInOneV5Page",
         L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
         rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
         parent, nullptr, hInstance, nullptr
     );
