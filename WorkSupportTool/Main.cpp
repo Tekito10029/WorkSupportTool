@@ -164,7 +164,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
         L"ExcelFinderTabbedMainWin",
         L"Excel検索 / 指定シート印刷",
         (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX),
-        CW_USEDEFAULT, CW_USEDEFAULT, 1360, 980,
+        120, 40, 1360, 980,
         nullptr, nullptr, hInstance, nullptr
     );
 
