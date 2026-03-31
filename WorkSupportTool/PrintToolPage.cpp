@@ -853,16 +853,16 @@ void LayoutPage(HWND hwnd) {
     D(g_staticCopies, x, y + 5, labelW, 22);
     D(g_editCopies, x + labelW, y, copiesW, rowH);
     D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 120, 24);
-    D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
+    D(g_btnPrinterProp, x + w - maxBtnW, y, maxBtnW, rowH);
     y += rowH + gap;
 
     D(g_staticPrinter, x, y + 5, labelW, 22);
     D(g_cmbPrinter, x + labelW, y, w - labelW - maxBtnW - gap, 220);
-    D(g_btnPrinterProp, x + w - maxBtnW, y, maxBtnW, rowH);
     y += rowH + gap;
 
     D(g_staticPaper, x, y + 5, labelW, 22);
     D(g_cmbPaper, x + labelW, y, 180, 220);
+    D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
     y += rowH + gap;
 
     D(g_editLog, x, y, w, max(80, rc.bottom - y - margin));
