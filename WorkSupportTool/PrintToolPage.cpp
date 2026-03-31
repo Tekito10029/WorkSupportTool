@@ -138,11 +138,11 @@ namespace {
 
         int idx = GetCurrentFileLineIndex();
         if (idx < 0 || idx >= (int)g_files.size()) {
-            SetWindowTextW(g_staticRemoveTarget, L"削除対象: なし");
+            SetWindowTextW(g_staticRemoveTarget, L"対象: なし");
             return;
         }
 
-        std::wstring text = L"削除対象: " + g_files[(size_t)idx];
+        std::wstring text = L"対象: " + g_files[(size_t)idx];
         SetWindowTextW(g_staticRemoveTarget, text.c_str());
     }
 
@@ -797,59 +797,83 @@ void DoPrint() {
         AddLog(L"完了しました。");
     }
 
-    void LayoutPage(HWND hwnd) {
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
+void LayoutPage(HWND hwnd) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
 
-        const int margin = 12;
-        const int gap = 8;
-        const int btnW = 132;
-        const int labelW = 100;
-        const int copiesW = 68;
-        const int rowH = 38;
-        const int labelH = 30;
+    const int margin = 12;
+    const int gap = 8;
+    const int labelW = 100;
+    const int copiesW = 68;
+    const int rowH = 32;
 
-        int x = margin;
-        int y = margin;
-        int w = rc.right - rc.left - margin * 2;
+    int x = margin;
+    int y = margin;
+    int w = rc.right - rc.left - margin * 2;
 
-        MoveWindow(g_staticFiles, x, y, w, labelH, TRUE);
-        y += labelH + 4;
-        MoveWindow(g_btnAddFiles, x + w - btnW * 3 - gap * 2, y, btnW, rowH, TRUE);
-        MoveWindow(g_btnRemoveFile, x + w - btnW * 2 - gap, y, btnW, rowH, TRUE);
-        MoveWindow(g_btnClearFiles, x + w - btnW, y, btnW, rowH, TRUE);
-        y += rowH + 4;
+    const int minBtnW = 92;
+    const int maxBtnW = 132;
+    int freeWForTopButtons = w - labelW - 24;
+    int btnW = max(minBtnW, min(maxBtnW, (freeWForTopButtons - gap * 2) / 3));
 
-        MoveWindow(g_staticRemoveTarget, x, y, w, labelH + 2, TRUE);
-        y += (labelH + 2) + 6;
+    int btnX3 = x + w - btnW;
+    int btnX2 = btnX3 - gap - btnW;
+    int btnX1 = btnX2 - gap - btnW;
 
-        MoveWindow(g_listFiles, x, y, w, 140, TRUE);
-        y += 120 + gap;
+    HDWP hdwp = BeginDeferWindowPos(20);
+    if (!hdwp) return;
 
-        MoveWindow(g_staticSheets, x, y + 2, labelW, labelH, TRUE);
-        MoveWindow(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 60, TRUE);
-        MoveWindow(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH, TRUE);
-        y += 64;
-        MoveWindow(g_staticSheetsHint, x + labelW, y, w - labelW, 28, TRUE);
-        y += 28;
+    auto D = [&](HWND h, int px, int py, int pw, int ph) {
+        hdwp = DeferWindowPos(
+            hdwp, h, nullptr, px, py, pw, ph,
+            SWP_NOZORDER | SWP_NOACTIVATE
+        );
+        };
 
-        MoveWindow(g_staticCopies, x, y + 2, labelW, labelH, TRUE);
-        MoveWindow(g_editCopies, x + labelW, y, copiesW, 36, TRUE);
-        MoveWindow(g_chkPreview, x + labelW + copiesW + 16, y + 2, 150, 32, TRUE);
-        MoveWindow(g_btnPrint, x + w - btnW, y - 1, btnW, rowH + 6, TRUE);
-        y += rowH + gap;
+    D(g_staticFiles, x, y + 5, labelW, 22);
+    D(g_btnAddFiles, btnX1, y, btnW, rowH);
+    D(g_btnRemoveFile, btnX2, y, btnW, rowH);
+    D(g_btnClearFiles, btnX3, y, btnW, rowH);
+    y += rowH + 4;
 
-        MoveWindow(g_staticPrinter, x, y + 3, labelW, labelH, TRUE);
-        MoveWindow(g_cmbPrinter, x + labelW, y, w - labelW - btnW - gap, 400, TRUE);
-        MoveWindow(g_btnPrinterProp, x + w - btnW, y, btnW, rowH, TRUE);
-        y += rowH + gap;
+    D(g_staticRemoveTarget, x, y, w, 20);
+    y += 20 + 6;
 
-        MoveWindow(g_staticPaper, x, y + 3, labelW, labelH, TRUE);
-        MoveWindow(g_cmbPaper, x + labelW, y, w - labelW, 300, TRUE);
-        y += rowH + gap;
+    D(g_listFiles, x, y, w, 120);
+    y += 120 + gap;
 
-        MoveWindow(g_editLog, x, y, w, rc.bottom - y - margin, TRUE);
-    }
+    D(g_staticSheets, x, y + 5, labelW, 22);
+    D(g_editSheets, x + labelW, y, w - labelW - maxBtnW - gap, 52);
+    D(g_btnSaveSheetSet, x + w - maxBtnW, y, maxBtnW, rowH);
+    y += 56;
+
+    D(g_staticSheetsHint, x + labelW, y, w - labelW, 20);
+    y += 24;
+
+    D(g_staticCopies, x, y + 5, labelW, 22);
+    D(g_editCopies, x + labelW, y, copiesW, rowH);
+    D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 120, 24);
+    D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
+    y += rowH + gap;
+
+    D(g_staticPrinter, x, y + 5, labelW, 22);
+    D(g_cmbPrinter, x + labelW, y, w - labelW - maxBtnW - gap, 220);
+    D(g_btnPrinterProp, x + w - maxBtnW, y, maxBtnW, rowH);
+    y += rowH + gap;
+
+    D(g_staticPaper, x, y + 5, labelW, 22);
+    D(g_cmbPaper, x + labelW, y, 180, 220);
+    y += rowH + gap;
+
+    D(g_editLog, x, y, w, max(80, rc.bottom - y - margin));
+
+    EndDeferWindowPos(hdwp);
+
+    RedrawWindow(
+        hwnd, nullptr, nullptr,
+        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
+    );
+}
 
     LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         switch (msg) {
@@ -884,7 +908,7 @@ void DoPrint() {
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FILE, g_hInst, nullptr);
             g_btnClearFiles = CreateWindowW(L"BUTTON", L"一覧クリア",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CLEAR_FILES, g_hInst, nullptr);
-            g_staticRemoveTarget = CreateWindowW(L"STATIC", L"削除対象: なし",
+            g_staticRemoveTarget = CreateWindowW(L"STATIC", L"対象: なし",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_REMOVE_TARGET, g_hInst, nullptr);
 
             g_staticSheets = CreateWindowW(L"STATIC", L"印刷シート名",

@@ -101,6 +101,16 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
+    case WM_GETMINMAXINFO:
+    {
+        MINMAXINFO* p = reinterpret_cast<MINMAXINFO*>(lParam);
+        if (p) {
+            p->ptMinTrackSize.x = 1360; // 最小幅
+            p->ptMinTrackSize.y = 980;  // 最小高さ
+        }
+        return 0;
+    }
+
     case WM_SIZE:
         LayoutMain(hwnd);
         return 0;
@@ -153,7 +163,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     HWND hwnd = CreateWindowW(
         L"ExcelFinderTabbedMainWin",
         L"Excel検索 / 指定シート印刷",
-        WS_OVERLAPPEDWINDOW,
+        (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX),
         CW_USEDEFAULT, CW_USEDEFAULT, 1360, 980,
         nullptr, nullptr, hInstance, nullptr
     );
