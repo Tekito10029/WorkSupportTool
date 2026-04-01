@@ -104,6 +104,25 @@ namespace {
     HGLOBAL g_hDevMode = nullptr;
     HGLOBAL g_hDevNames = nullptr;
 
+    static std::wstring GetDefaultPrinterName()
+    {
+        DWORD needed = 0;
+        GetDefaultPrinterW(nullptr, &needed);
+        if (needed == 0) return L"";
+
+        std::wstring name(needed, L'\0');
+        if (!GetDefaultPrinterW(name.data(), &needed)) return L"";
+
+        while (!name.empty() && name.back() == L'\0') name.pop_back();
+        return name;
+    }
+
+    static bool SetDefaultPrinterName(const std::wstring& name)
+    {
+        if (name.empty()) return false;
+        return SetDefaultPrinterW(name.c_str()) != FALSE;
+    }
+
     std::wstring GetExeDir() {
         wchar_t buf[MAX_PATH * 4]{};
         DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)std::size(buf));
@@ -670,6 +689,14 @@ namespace {
             return false;
         }
 
+        std::wstring selectedPrinter = g_selectedPrinter;
+        std::wstring oldDefaultPrinter = GetDefaultPrinterName();
+        bool changedDefaultPrinter = false;
+
+        if (!selectedPrinter.empty() && oldDefaultPrinter != selectedPrinter) {
+            changedDefaultPrinter = SetDefaultPrinterName(selectedPrinter);
+        }
+
         SetBoolProperty(app, L"Visible", preview);
         SetBoolProperty(app, L"DisplayAlerts", false);
 
@@ -762,6 +789,10 @@ namespace {
         workbooks->Release();
         CallMethod(app, L"Quit");
         app->Release();
+
+        if (changedDefaultPrinter && !oldDefaultPrinter.empty()) {
+            SetDefaultPrinterName(oldDefaultPrinter);
+        }
 
         return !printed.empty();
     }
