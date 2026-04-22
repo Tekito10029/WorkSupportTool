@@ -44,6 +44,7 @@ enum : int {
     IDC_BTN_ROOT_REMOVE,
     IDC_BTN_ROOT_UP,
     IDC_BTN_ROOT_DOWN,
+    IDC_BTN_ROOT_TOGGLE,
     IDC_STATIC_ROOTS_HINT,
 
 
@@ -195,6 +196,7 @@ static HWND g_listRoots = nullptr;
 static HWND g_btnRootRemove = nullptr;
 static HWND g_btnRootUp = nullptr;
 static HWND g_btnRootDown = nullptr;
+static HWND g_btnRootToggle = nullptr;
 static HWND g_staticRootsHint = nullptr;
 
 static HWND g_cmbMode = nullptr;      // 0: 今日, 1: 過去N日
@@ -310,6 +312,7 @@ static std::wstring Trim(const std::wstring& s);
 static std::wstring GetWindowTextWStr(HWND h);
 static void SetWindowTextWStr(HWND h, const std::wstring& s);
 static fs::path NormalizePath(const fs::path& p);
+static void SyncLegacyRootEditFromList();
 
 // ---- Forward declarations (used before definitions) ----
 // Needed because some handlers/commit functions appear before these are defined.
@@ -346,12 +349,147 @@ static void SetRootsToListBox(const std::vector<std::wstring>& roots)
     }
 }
 
+static const wchar_t* kRootEnabledPrefix = L"[有効] ";
+static const wchar_t* kRootDisabledPrefix = L"[無効] ";
+
+static std::wstring BuildRootDisplayText(const std::wstring& path, bool enabled)
+{
+    return std::wstring(enabled ? kRootEnabledPrefix : kRootDisabledPrefix) + Trim(path);
+}
+
+static void ParseRootDisplayText(const std::wstring& text, std::wstring& outPath, bool& outEnabled)
+{
+    std::wstring t = Trim(text);
+    if (t.rfind(kRootEnabledPrefix, 0) == 0) {
+        outEnabled = true;
+        outPath = Trim(t.substr(wcslen(kRootEnabledPrefix)));
+        return;
+    }
+    if (t.rfind(kRootDisabledPrefix, 0) == 0) {
+        outEnabled = false;
+        outPath = Trim(t.substr(wcslen(kRootDisabledPrefix)));
+        return;
+    }
+    outEnabled = true;
+    outPath = t;
+}
+
+struct RootEntry {
+    std::wstring path;
+    bool enabled = true;
+};
+
+static std::vector<RootEntry> GetRootEntriesFromListBox()
+{
+    std::vector<RootEntry> out;
+    if (!g_listRoots) return out;
+
+    int n = (int)SendMessageW(g_listRoots, LB_GETCOUNT, 0, 0);
+    if (n <= 0) return out;
+
+    out.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        wchar_t buf[2048]{};
+        SendMessageW(g_listRoots, LB_GETTEXT, (WPARAM)i, (LPARAM)buf);
+
+        RootEntry e;
+        ParseRootDisplayText(buf, e.path, e.enabled);
+        if (!e.path.empty()) out.push_back(std::move(e));
+    }
+    return out;
+}
+
+static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
+{
+    if (!g_listRoots) return;
+    SendMessageW(g_listRoots, LB_RESETCONTENT, 0, 0);
+    for (const auto& e : entries) {
+        auto t = Trim(e.path);
+        if (t.empty()) continue;
+        auto disp = BuildRootDisplayText(t, e.enabled);
+        SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
+    }
+}
+
+static std::vector<std::wstring> GetEnabledRootsFromListBox()
+{
+    std::vector<std::wstring> out;
+    auto entries = GetRootEntriesFromListBox();
+    out.reserve(entries.size());
+    for (const auto& e : entries) {
+        if (e.enabled && !e.path.empty()) out.push_back(e.path);
+    }
+    return out;
+}
+
+static std::wstring SerializeRootEntries(const std::vector<RootEntry>& entries)
+{
+    std::wstring out;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i) out += L"\n";
+        out += (entries[i].enabled ? L"1\t" : L"0\t");
+        out += entries[i].path;
+    }
+    return out;
+}
+
+static std::vector<RootEntry> DeserializeRootEntries(const std::wstring& text)
+{
+    std::vector<RootEntry> out;
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t nl = text.find(L'\n', pos);
+        std::wstring line = (nl == std::wstring::npos) ? text.substr(pos) : text.substr(pos, nl - pos);
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        pos = (nl == std::wstring::npos) ? text.size() + 1 : nl + 1;
+
+        line = Trim(line);
+        if (line.empty()) continue;
+
+        RootEntry e;
+        if (line.size() >= 2 && (line[0] == L'0' || line[0] == L'1') && line[1] == L'\t') {
+            e.enabled = (line[0] == L'1');
+            e.path = Trim(line.substr(2));
+        }
+        else {
+            e.enabled = true;
+            e.path = Trim(line);
+        }
+        if (!e.path.empty()) out.push_back(std::move(e));
+    }
+    return out;
+}
+
+static bool ToggleSelectedRootEnabled()
+{
+    if (!g_listRoots) return false;
+
+    int sel = (int)SendMessageW(g_listRoots, LB_GETCURSEL, 0, 0);
+    if (sel == LB_ERR) return false;
+
+    wchar_t buf[2048]{};
+    SendMessageW(g_listRoots, LB_GETTEXT, (WPARAM)sel, (LPARAM)buf);
+
+    std::wstring path;
+    bool enabled = true;
+    ParseRootDisplayText(buf, path, enabled);
+    if (path.empty()) return false;
+
+    std::wstring disp = BuildRootDisplayText(path, !enabled);
+    SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)sel, 0);
+    int idx = (int)SendMessageW(g_listRoots, LB_INSERTSTRING, (WPARAM)sel, (LPARAM)disp.c_str());
+    SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
+
+    SyncLegacyRootEditFromList();
+    return true;
+}
+
 static bool RootExistsInListBox(const std::wstring& path)
 {
     auto low = ToLower(Trim(path));
-    auto roots = GetRootsFromListBox();
+    auto roots = GetRootEntriesFromListBox();
     for (auto& r : roots) {
-        if (ToLower(Trim(r)) == low) return true;
+        if (ToLower(Trim(r.path)) == low) return true;
     }
     return false;
 }
@@ -362,7 +500,8 @@ static void AddRootToListBoxDedup(const std::wstring& path)
     auto t = Trim(path);
     if (t.empty()) return;
     if (RootExistsInListBox(t)) return;
-    SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)t.c_str());
+    auto disp = BuildRootDisplayText(t, true);
+    SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
 }
 
 static void MoveRootItem(int from, int to)
@@ -386,7 +525,7 @@ static void MoveRootItem(int from, int to)
 static std::vector<fs::path> GetRootPathsNormalizedFromUI()
 {
     std::vector<fs::path> roots;
-    auto lines = GetRootsFromListBox();
+    auto lines = GetEnabledRootsFromListBox();
     for (auto& s : lines) roots.push_back(NormalizePath(fs::path(s)));
     return roots;
 }
@@ -434,8 +573,8 @@ static std::wstring JoinRootsForIni(const std::vector<std::wstring>& roots)
 
 static void SyncLegacyRootEditFromList()
 {
-    // Search thread currently reads g_editRoot. Keep it in sync with root list.
-    auto roots = GetRootsFromListBox();
+    // Search thread currently reads g_editRoot. Keep it in sync with enabled roots only.
+    auto roots = GetEnabledRootsFromListBox();
     SetWindowTextWStr(g_editRoot, JoinRootsForIni(roots)); // '|' separated is OK for SplitRootsText
 }
 
@@ -1731,19 +1870,31 @@ static void SetLeftTab(int tab, bool saveIni = true) {
 
 // -------------------- Settings load/save --------------------
 static void LoadSettings() {
-    auto rootsIni = IniReadStr(L"Main", L"Roots", L"");
-    std::vector<std::wstring> rootsList;
-    if (!rootsIni.empty()) {
-        rootsList = SplitRootsText(rootsIni);
+    auto rootsEx = IniReadStr(L"Main", L"RootsEx", L"");
+    if (!rootsEx.empty()) {
+        SetRootEntriesToListBox(DeserializeRootEntries(rootsEx));
     }
     else {
-        auto one = Trim(IniReadStr(L"Main", L"Root", L""));
-        if (!one.empty()) rootsList.push_back(one);
+        auto rootsIni = IniReadStr(L"Main", L"Roots", L"");
+        std::vector<std::wstring> rootsList;
+        if (!rootsIni.empty()) {
+            rootsList = SplitRootsText(rootsIni);
+        }
+        else {
+            auto one = Trim(IniReadStr(L"Main", L"Root", L""));
+            if (!one.empty()) rootsList.push_back(one);
+        }
+        std::vector<RootEntry> entries;
+        for (const auto& r : rootsList) {
+            auto t = Trim(r);
+            if (!t.empty()) entries.push_back({ t, true });
+        }
+        SetRootEntriesToListBox(entries);
     }
-    SetRootsToListBox(rootsList);
     SyncLegacyRootEditFromList();
     // legacy edit is kept hidden
-    if (!rootsList.empty()) SetWindowTextWStr(g_editRoot, rootsList[0]);
+    auto enabledRoots = GetEnabledRootsFromListBox();
+    if (!enabledRoots.empty()) SetWindowTextWStr(g_editRoot, enabledRoots[0]);
     g_lastExcludeFile = IniReadStr(L"Main", L"ExcludeFile", g_lastExcludeFile.empty() ? (GetExeDir() + L"\\exclude.txt") : g_lastExcludeFile);
     g_lastCsvFile = IniReadStr(L"Main", L"CsvFile", g_lastCsvFile.empty() ? (GetExeDir() + L"\\results.csv") : g_lastCsvFile);
     g_lastNameExcludeFile = IniReadStr(L"Main", L"NameExcludeFile", g_lastNameExcludeFile.empty() ? (GetExeDir() + L"\\name_exclude.txt") : g_lastNameExcludeFile);
@@ -1804,9 +1955,11 @@ static void LoadSettings() {
 }
 
 static void SaveSettings() {
-    auto rootItems = SplitRootsText(GetWindowTextWStr(g_editRoot));
-    IniWriteStr(L"Main", L"Roots", JoinRootsForIni(rootItems));
-    IniWriteStr(L"Main", L"Root", rootItems.empty() ? L"" : rootItems[0]);
+    auto rootEntries = GetRootEntriesFromListBox();
+    auto enabledRootItems = GetEnabledRootsFromListBox();
+    IniWriteStr(L"Main", L"RootsEx", SerializeRootEntries(rootEntries));
+    IniWriteStr(L"Main", L"Roots", JoinRootsForIni(enabledRootItems));
+    IniWriteStr(L"Main", L"Root", enabledRootItems.empty() ? L"" : enabledRootItems[0]);
     IniWriteStr(L"Main", L"ExcludeFile", g_lastExcludeFile);
     IniWriteStr(L"Main", L"CsvFile", g_lastCsvFile);
     IniWriteStr(L"Main", L"NameExcludeFile", g_lastNameExcludeFile);
@@ -1936,7 +2089,7 @@ static void DoLayout(HWND hwnd) {
         y += rowH + gap;
 
         // Roots list + buttons
-        int rootListH = max(112, rowH * 4 + gap * 3);
+        int rootListH = max(150, rowH * 5 + gap * 4);
         int btnColW = 112;
         int rootListX = padding;
         int btnX = leftBoundary - btnColW;
@@ -1948,6 +2101,7 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_btnRootRemove, btnX, y + (rowH + gap) * 1, btnColW, rowH, TRUE);
         MoveWindow(g_btnRootUp, btnX, y + (rowH + gap) * 2, btnColW, rowH, TRUE);
         MoveWindow(g_btnRootDown, btnX, y + (rowH + gap) * 3, btnColW, rowH, TRUE);
+        MoveWindow(g_btnRootToggle, btnX, y + (rowH + gap) * 4, btnColW, rowH, TRUE);
         y += rootListH + gap;
 
         // Calendar row
@@ -2558,6 +2712,10 @@ static void StartSearch() {
         MessageBoxW(g_hwndMain, L"検索元フォルダが未設定です（[追加…]でフォルダを追加してください）。", L"確認", MB_OK | MB_ICONWARNING);
         return;
     }
+    if (GetEnabledRootsFromListBox().empty()) {
+        MessageBoxW(g_hwndMain, L"有効な検索先がありません。検索先を有効にしてください。", L"確認", MB_OK | MB_ICONWARNING);
+        return;
+    }
     RebuildFileNameExcludeCache();
 
     ClearResultsUI();
@@ -2602,7 +2760,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         // statics
         g_staticRoot = CreateWindowW(L"STATIC", L"検索先:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticRootsHint = CreateWindowW(L"STATIC", L"（複数可）下のリストに追加してください", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
+        g_staticRootsHint = CreateWindowW(L"STATIC", L"（複数可）ダブルクリックまたはボタンで有効/無効を切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
         g_staticMode = CreateWindowW(L"STATIC", L"期間:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticDays = CreateWindowW(L"STATIC", L"過去N日:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticTimeBase = CreateWindowW(L"STATIC", L"日時:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
@@ -2626,6 +2784,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnRootRemove = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_REMOVE, g_hInst, nullptr);
         g_btnRootUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_UP, g_hInst, nullptr);
         g_btnRootDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_DOWN, g_hInst, nullptr);
+        g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効/無効", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
 
         // Mode controls
         g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
@@ -2776,7 +2935,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HWND controls[] = {
             g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticFrom, g_staticTo, g_staticFilter,
             g_staticExclFolder, g_staticExclPattern, g_staticExclName,
-            g_editRoot, g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown,
+            g_editRoot, g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
             g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo, g_tabLeft,
             g_frameFolderExcl, g_frameNameExcl,
             g_chkEnableFolderExcl, g_listExcludes, g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
@@ -2852,6 +3011,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (PickFolder(hwnd, p)) {
                 AddRootToListBoxDedup(p);
                 SyncLegacyRootEditFromList();
+                SaveSettings();
+            }
+            return 0;
+        }
+
+        if (id == IDC_LIST_ROOTS && code == LBN_DBLCLK) {
+            if (ToggleSelectedRootEnabled()) {
+                SaveSettings();
             }
             return 0;
         }
@@ -2861,6 +3028,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (sel != LB_ERR) {
                 SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)sel, 0);
                 SyncLegacyRootEditFromList();
+                SaveSettings();
+            }
+            return 0;
+        }
+
+        if (id == IDC_BTN_ROOT_TOGGLE) {
+            if (ToggleSelectedRootEnabled()) {
+                SaveSettings();
             }
             return 0;
         }
@@ -2872,6 +3047,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (tgt < 0 || tgt >= n) return 0;
             MoveRootItem(sel, tgt);
             SyncLegacyRootEditFromList();
+            SaveSettings();
             return 0;
         }
         if (id == IDC_CMB_MODE && code == CBN_SELCHANGE) {
