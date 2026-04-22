@@ -1076,7 +1076,9 @@ namespace {
         const int rowH = 34;
         const int labelW = 110;
         const int copiesW = 80;
-        const int maxBtnW = 170;
+        const int btnW = 140;
+        const int smallBtnW = 120;
+        const int targetH = 24;
 
         const int x = margin;
         const int w = max(200, rc.right - margin * 2);
@@ -1085,44 +1087,58 @@ namespace {
             if (h) MoveWindow(h, x, y, w, hgt, TRUE);
             };
 
-        HDWP hdwp = BeginDeferWindowPos(32);
-        if (!hdwp) return;
-
         int y = margin;
 
         D(g_staticFiles, x, y, w, 20);
         y += 20 + 6;
 
+        // 対象ブック一覧
         D(g_listFiles, x, y, w, 150);
         y += 150 + gap;
 
+        // ファイル操作ボタン
+        int btnX = x;
+        D(g_btnAddFiles, btnX, y, btnW, rowH);
+        btnX += btnW + gap;
+
+        D(g_btnRemoveFile, btnX, y, smallBtnW, rowH);
+        btnX += smallBtnW + gap;
+
+        D(g_btnClearFiles, btnX, y, smallBtnW, rowH);
+        y += rowH + 6;
+
+        // 現在の削除対象
+        D(g_staticRemoveTarget, x, y, w, targetH);
+        y += targetH + gap;
+
+        // 印刷シート名
         D(g_staticSheets, x, y + 5, labelW, 22);
-        D(g_editSheets, x + labelW, y, w - labelW - maxBtnW - gap, 52);
-        D(g_btnSaveSheetSet, x + w - maxBtnW, y, maxBtnW, rowH);
+        D(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 52);
+        D(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH);
         y += 56;
 
         D(g_staticSheetsHint, x + labelW, y, w - labelW, 20);
         y += 24;
 
+        // 部数/プレビュー/印刷
         D(g_staticCopies, x, y + 5, labelW, 22);
         D(g_editCopies, x + labelW, y, copiesW, rowH);
         D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 140, 24);
+        D(g_btnPrint, x + w - btnW, y - 2, btnW, rowH + 4);
         y += rowH + gap;
-        D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
-        y += 10;
 
+        // ログ
         D(g_log, x, y + 5, labelW, 22);
         y += rowH;
 
         D(g_editLog, x, y, w, max(80, rc.bottom - y - margin));
-
-        EndDeferWindowPos(hdwp);
 
         RedrawWindow(
             hwnd, nullptr, nullptr,
             RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
         );
     }
+
     LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         switch (msg) {
         case WM_CREATE:
