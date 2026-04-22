@@ -1811,6 +1811,7 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_btnRootRemove, swSearch);
     ShowWindow(g_btnRootUp, swSearch);
     ShowWindow(g_btnRootDown, swSearch);
+    ShowWindow(g_btnRootToggle, swSearch);
     ShowWindow(g_staticRootsHint, swSearch);
 
     ShowWindow(g_staticMode, swSearch);
@@ -2024,6 +2025,7 @@ static void SetSearchingUi(bool searching) {
     EnableWindow(g_btnRootRemove, !searching);
     EnableWindow(g_btnRootUp, !searching);
     EnableWindow(g_btnRootDown, !searching);
+    EnableWindow(g_btnRootToggle, !searching);
     EnableWindow(g_editRoot, !searching);
     EnableWindow(g_cmbMode, !searching);
     EnableWindow(g_editDays, !searching);

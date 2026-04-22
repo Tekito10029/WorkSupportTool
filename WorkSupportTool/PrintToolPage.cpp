@@ -1016,7 +1016,7 @@ namespace {
 
         int copies = GetCopies();
 
-        AddLog(L"印刷ダイアログを開きます。[プロパティ] からトレイやカラーを設定してください。");
+        AddLog(L"印刷ダイアログを開きます。[プロパティ] から各種設定をしてください。");
 
         if (!ShowRuntimePrintDialog(copies)) {
             AddLog(L"印刷はキャンセルされました。");
