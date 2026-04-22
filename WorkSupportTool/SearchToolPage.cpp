@@ -271,6 +271,7 @@ static std::vector<std::wstring> g_fileNameWild;
 static std::vector<std::wstring> g_fileNameSubLow;
 
 static std::vector<std::unique_ptr<Hit>> g_results;
+static std::vector<size_t> g_visibleResultIndices;
 
 static std::wstring g_iniPath;
 static std::wstring g_currentScanDir; // NEW: scanning folder
@@ -1448,13 +1449,17 @@ static void SetListViewTimeHeader(TimeBase tb) {
 
 static void ClearResultsUI() {
     g_results.clear();
+    g_visibleResultIndices.clear();
     g_visibleCount = 0;
     ListView_DeleteAllItems(g_listResults);
     UpdateExportButtonEnabled();
 }
+
 static void AddResultToUI(std::unique_ptr<Hit> hit) {
     g_results.push_back(std::move(hit));
+    const size_t realIndex = g_results.size() - 1;
     const Hit& h = *g_results.back();
+
     const std::wstring fLow = GetFilterLow();
     if (!HitMatchesFilterLow(h, fLow)) {
         return;
@@ -1470,15 +1475,20 @@ static void AddResultToUI(std::unique_ptr<Hit> hit) {
     ListView_SetItemText(g_listResults, idx, 1, kb.data());
     ListView_SetItemText(g_listResults, idx, 2, (LPWSTR)h.fileName.c_str());
     ListView_SetItemText(g_listResults, idx, 3, (LPWSTR)h.path.c_str());
+
+    g_visibleResultIndices.push_back(realIndex);
     g_visibleCount++;
     UpdateExportButtonEnabled();
 }
+
 static void RebuildListViewFromResults() {
     const std::wstring fLow = GetFilterLow();
     ListView_DeleteAllItems(g_listResults);
+    g_visibleResultIndices.clear();
     g_visibleCount = 0;
-    for (const auto& hp : g_results) {
-        const Hit& h = *hp;
+
+    for (size_t i = 0; i < g_results.size(); ++i) {
+        const Hit& h = *g_results[i];
         if (!HitMatchesFilterLow(h, fLow)) continue;
 
         LVITEMW item{};
@@ -1491,10 +1501,13 @@ static void RebuildListViewFromResults() {
         ListView_SetItemText(g_listResults, idx, 1, kb.data());
         ListView_SetItemText(g_listResults, idx, 2, (LPWSTR)h.fileName.c_str());
         ListView_SetItemText(g_listResults, idx, 3, (LPWSTR)h.path.c_str());
+
+        g_visibleResultIndices.push_back(i);
         g_visibleCount++;
     }
     UpdateExportButtonEnabled();
 }
+
 static void SortResults(int col, bool asc) {
     if (g_results.empty()) return;
 
@@ -3262,12 +3275,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (hdr->hwndFrom == g_listResults) {
-            if (hdr->code == NM_DBLCLK) {
-                int sel = ListView_GetNextItem(g_listResults, -1, LVNI_SELECTED);
-                if (sel >= 0 && sel < (int)g_results.size()) {
-                    ShellExecuteW(hwnd, L"open", g_results[(size_t)sel]->path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            if (hdr->hwndFrom == g_listResults) {
+                if (hdr->code == NM_DBLCLK) {
+                    int sel = ListView_GetNextItem(g_listResults, -1, LVNI_SELECTED);
+                    if (sel >= 0 && sel < (int)g_visibleResultIndices.size()) {
+                        size_t realIndex = g_visibleResultIndices[(size_t)sel];
+                        if (realIndex < g_results.size() && g_results[realIndex]) {
+                            ShellExecuteW(hwnd, L"open", g_results[realIndex]->path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                        }
+                    }
+                    return 0;
                 }
-                return 0;
             }
             if (hdr->code == LVN_COLUMNCLICK) {
                 if (g_searching) return 0;
