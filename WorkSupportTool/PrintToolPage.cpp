@@ -599,6 +599,38 @@ namespace {
         return paper;
     }
 
+    short GetTrayCodeFromDevMode(HGLOBAL hDevMode)
+    {
+        if (!hDevMode) return 0;
+
+        auto* pDM = reinterpret_cast<DEVMODEW*>(GlobalLock(hDevMode));
+        if (!pDM) return 0;
+
+        short tray = 0;
+        if (pDM->dmFields & DM_DEFAULTSOURCE) {
+            tray = static_cast<short>(pDM->dmDefaultSource);
+        }
+
+        GlobalUnlock(hDevMode);
+        return tray;
+    }
+
+    short GetColorModeFromDevMode(HGLOBAL hDevMode)
+    {
+        if (!hDevMode) return 0;
+
+        auto* pDM = reinterpret_cast<DEVMODEW*>(GlobalLock(hDevMode));
+        if (!pDM) return 0;
+
+        short color = 0;
+        if (pDM->dmFields & DM_COLOR) {
+            color = static_cast<short>(pDM->dmColor);
+        }
+
+        GlobalUnlock(hDevMode);
+        return color;
+    }
+
     int GetCopiesFromDevModeOrDefault(HGLOBAL hDevMode, int fallbackCopies)
     {
         if (!hDevMode) return fallbackCopies;
@@ -618,16 +650,17 @@ namespace {
         return copies;
     }
 
-    bool ShowRuntimePrintDialog(bool allowSelection, int& outCopies)
+    bool ShowRuntimePrintDialog(int& outCopies)
     {
         PRINTDLGW pd{};
         pd.lStructSize = sizeof(pd);
         pd.hwndOwner = g_hwndPage;
-        pd.Flags = PD_RETURNDC | PD_USEDEVMODECOPIESANDCOLLATE | PD_NOPAGENUMS | PD_NOSELECTION;
-
-        if (!allowSelection) {
-            pd.Flags |= PD_HIDEPRINTTOFILE;
-        }
+        pd.Flags =
+            PD_RETURNDC |
+            PD_USEDEVMODECOPIESANDCOLLATE |
+            PD_NOPAGENUMS |
+            PD_NOSELECTION |
+            PD_HIDEPRINTTOFILE;
 
         if (g_hDevMode)  pd.hDevMode = g_hDevMode;
         if (g_hDevNames) pd.hDevNames = g_hDevNames;
@@ -660,6 +693,20 @@ namespace {
 
         RefreshPrinterCombo();
         RefreshPaperCombo();
+
+        {
+            short paper = GetPaperCodeFromDevMode(g_hDevMode);
+            short tray = GetTrayCodeFromDevMode(g_hDevMode);
+            short color = GetColorModeFromDevMode(g_hDevMode);
+
+            std::wstringstream ss;
+            ss << L"印刷ダイアログ選択: プリンタ=[" << g_selectedPrinter << L"]"
+                << L" 部数=[" << outCopies << L"]";
+            if (paper != 0) ss << L" 用紙=[" << paper << L"]";
+            if (tray != 0)  ss << L" トレイ=[" << tray << L"]";
+            if (color != 0) ss << L" カラー=[" << color << L"]";
+            AddLog(ss.str());
+        }
 
         return true;
     }
@@ -909,172 +956,173 @@ namespace {
 
         return !printed.empty();
     }
-    
-void ShowPrintSetupDialog() {
-    PRINTDLGW pd{};
-    pd.lStructSize = sizeof(pd);
-    pd.hwndOwner = g_hwndPage;
-    pd.Flags = PD_PRINTSETUP | PD_USEDEVMODECOPIESANDCOLLATE;
 
-    if (g_hDevMode) pd.hDevMode = g_hDevMode;
-    if (g_hDevNames) pd.hDevNames = g_hDevNames;
+    void ShowPrintSetupDialog() {
+        PRINTDLGW pd{};
+        pd.lStructSize = sizeof(pd);
+        pd.hwndOwner = g_hwndPage;
+        pd.Flags = PD_PRINTSETUP | PD_USEDEVMODECOPIESANDCOLLATE;
 
-    if (PrintDlgW(&pd)) {
-        if (g_hDevMode && g_hDevMode != pd.hDevMode) GlobalFree(g_hDevMode);
-        if (g_hDevNames && g_hDevNames != pd.hDevNames) GlobalFree(g_hDevNames);
-        g_hDevMode = pd.hDevMode;
-        g_hDevNames = pd.hDevNames;
-        AddLog(L"印刷設定を更新しました。");
-    }
-}
+        if (g_hDevMode) pd.hDevMode = g_hDevMode;
+        if (g_hDevNames) pd.hDevNames = g_hDevNames;
 
-void DoPrint() {
-    if (g_isPrinting) {
-        AddLog(L"印刷処理中です。完了するまでお待ちください。");
-        return;
+        if (PrintDlgW(&pd)) {
+            if (g_hDevMode && g_hDevMode != pd.hDevMode) GlobalFree(g_hDevMode);
+            if (g_hDevNames && g_hDevNames != pd.hDevNames) GlobalFree(g_hDevNames);
+            g_hDevMode = pd.hDevMode;
+            g_hDevNames = pd.hDevNames;
+            AddLog(L"印刷設定を更新しました。");
+        }
     }
 
-    g_isPrinting = true;
-    if (g_btnPrint) EnableWindow(g_btnPrint, FALSE);
+    void DoPrint() {
+        if (g_isPrinting) {
+            AddLog(L"印刷処理中です。完了するまでお待ちください。");
+            return;
+        }
 
-    if (g_btnPrint) {
-        SetWindowTextW(g_btnPrint, L"印刷中...");
-        EnableWindow(g_btnPrint, FALSE);
-    }
+        g_isPrinting = true;
+        if (g_btnPrint) EnableWindow(g_btnPrint, FALSE);
 
-    auto finishPrint = []() {
-        g_isPrinting = false;
         if (g_btnPrint) {
-            SetWindowTextW(g_btnPrint, L"▶ 印刷を実行");
-            EnableWindow(g_btnPrint, TRUE);
+            SetWindowTextW(g_btnPrint, L"印刷中...");
+            EnableWindow(g_btnPrint, FALSE);
         }
-        };
 
-    if (g_files.empty()) {
-        MessageBoxW(g_hwndPage, L"先にExcelブックを追加してください。", L"印刷ツール", MB_ICONWARNING);
-        finishPrint();
-        return;
-    }
+        auto finishPrint = []() {
+            g_isPrinting = false;
+            if (g_btnPrint) {
+                SetWindowTextW(g_btnPrint, L"▶ 印刷を実行");
+                EnableWindow(g_btnPrint, TRUE);
+            }
+            };
 
-    wchar_t sheetBuf[4096]{};
-    GetWindowTextW(g_editSheets, sheetBuf, 4095);
-    std::vector<std::wstring> sheetNames = SplitSheetNames(sheetBuf);
-    if (sheetNames.empty()) {
-        MessageBoxW(g_hwndPage, L"印刷するシート名を1つ以上入力してください。", L"印刷ツール", MB_ICONWARNING);
-        finishPrint();
-        return;
-    }
-
-    const bool preview = GetCheck(g_chkPreview);
-
-    int copies = GetCopies();
-
-    AddLog(L"印刷ダイアログを開きます。プリンタ・用紙・部数を選択してください。");
-
-    if (!ShowRuntimePrintDialog(true, copies)) {
-        AddLog(L"印刷はキャンセルされました。");
-        finishPrint();
-        return;
-    }
-
-    SaveSheetSettings();
-
-    const std::wstring selectedPrinter = g_selectedPrinter;
-    const short paperCode = GetPaperCodeFromDevMode(g_hDevMode);
-
-    if (selectedPrinter.empty()) {
-        MessageBoxW(g_hwndPage, L"プリンタが選択されていません。", L"印刷ツール", MB_OK | MB_ICONWARNING);
-        finishPrint();
-        return;
-    }
-
-    {
-        std::wstringstream ss;
-        ss << L"印刷設定: プリンタ=[" << selectedPrinter << L"] 部数=[" << copies << L"]";
-        if (paperCode != 0) {
-            ss << L" 用紙コード=[" << paperCode << L"]";
+        if (g_files.empty()) {
+            MessageBoxW(g_hwndPage, L"先にExcelブックを追加してください。", L"印刷ツール", MB_ICONWARNING);
+            finishPrint();
+            return;
         }
-        AddLog(ss.str());
-    }
 
-    if (preview) {
-        AddLog(L"印刷プレビューを開きます。プレビュー画面で印刷またはキャンセルを選択してください。");
-    }
-    else {
-        AddLog(L"印刷を開始します...");
-    }
-
-    for (const auto& file : g_files) {
-        std::wstring msg;
-        PrintOneBook(file, sheetNames, copies, preview, selectedPrinter, paperCode, msg);
-        AddLog(msg);
-
-        MSG m{};
-        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&m);
-            DispatchMessageW(&m);
+        wchar_t sheetBuf[4096]{};
+        GetWindowTextW(g_editSheets, sheetBuf, 4095);
+        std::vector<std::wstring> sheetNames = SplitSheetNames(sheetBuf);
+        if (sheetNames.empty()) {
+            MessageBoxW(g_hwndPage, L"印刷するシート名を1つ以上入力してください。", L"印刷ツール", MB_ICONWARNING);
+            finishPrint();
+            return;
         }
+
+        const bool preview = GetCheck(g_chkPreview);
+
+        int copies = GetCopies();
+
+        AddLog(L"印刷ダイアログを開きます。[プロパティ] からトレイやカラーを設定してください。");
+
+        if (!ShowRuntimePrintDialog(copies)) {
+            AddLog(L"印刷はキャンセルされました。");
+            finishPrint();
+            return;
+        }
+
+        SaveSheetSettings();
+
+        const std::wstring selectedPrinter = g_selectedPrinter;
+        const short paperCode = GetPaperCodeFromDevMode(g_hDevMode);
+
+        if (selectedPrinter.empty()) {
+            MessageBoxW(g_hwndPage, L"プリンタが選択されていません。", L"印刷ツール", MB_OK | MB_ICONWARNING);
+            finishPrint();
+            return;
+        }
+
+        {
+            std::wstringstream ss;
+            ss << L"印刷設定: プリンタ=[" << selectedPrinter << L"] 部数=[" << copies << L"]";
+            if (paperCode != 0) {
+                ss << L" 用紙コード=[" << paperCode << L"]";
+            }
+            AddLog(ss.str());
+        }
+
+        if (preview) {
+            AddLog(L"印刷プレビューを開きます。プレビュー画面で印刷またはキャンセルを選択してください。");
+        }
+        else {
+            AddLog(L"印刷を開始します...");
+        }
+
+        for (const auto& file : g_files) {
+            std::wstring msg;
+            PrintOneBook(file, sheetNames, copies, preview, selectedPrinter, paperCode, msg);
+            AddLog(msg);
+
+            MSG m{};
+            while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
+        }
+
+        AddLog(L"完了しました。");
+        finishPrint();
     }
 
-    AddLog(L"完了しました。");
-    finishPrint();
-}
+    void LayoutPage(HWND hwnd) {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
 
-void LayoutPage(HWND hwnd) {
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
+        const int margin = 16;
+        const int gap = 10;
+        const int rowH = 34;
+        const int labelW = 110;
+        const int copiesW = 80;
+        const int maxBtnW = 170;
 
-    const int margin = 16;
-    const int gap = 10;
-    const int rowH = 34;
-    const int labelW = 110;
-    const int copiesW = 80;
-    const int maxBtnW = 170;
+        const int x = margin;
+        const int w = max(200, rc.right - margin * 2);
 
-    const int x = margin;
-    const int w = max(200, rc.right - margin * 2);
+        auto D = [](HWND h, int x, int y, int w, int hgt) {
+            if (h) MoveWindow(h, x, y, w, hgt, TRUE);
+            };
 
-    auto D = [](HWND h, int x, int y, int w, int hgt) {
-        if (h) MoveWindow(h, x, y, w, hgt, TRUE);
-        };
+        HDWP hdwp = BeginDeferWindowPos(32);
+        if (!hdwp) return;
 
-    HDWP hdwp = BeginDeferWindowPos(32);
-    if (!hdwp) return;
+        int y = margin;
 
-    int y = margin;
+        D(g_staticFiles, x, y, w, 20);
+        y += 20 + 6;
 
-    D(g_staticFiles, x, y, w, 20);
-    y += 20 + 6;
+        D(g_listFiles, x, y, w, 150);
+        y += 150 + gap;
 
-    D(g_listFiles, x, y, w, 120);
-    y += 120 + gap;
+        D(g_staticSheets, x, y + 5, labelW, 22);
+        D(g_editSheets, x + labelW, y, w - labelW - maxBtnW - gap, 52);
+        D(g_btnSaveSheetSet, x + w - maxBtnW, y, maxBtnW, rowH);
+        y += 56;
 
-    D(g_staticSheets, x, y + 5, labelW, 22);
-    D(g_editSheets, x + labelW, y, w - labelW - maxBtnW - gap, 52);
-    D(g_btnSaveSheetSet, x + w - maxBtnW, y, maxBtnW, rowH);
-    y += 56;
+        D(g_staticSheetsHint, x + labelW, y, w - labelW, 20);
+        y += 24;
 
-    D(g_staticSheetsHint, x + labelW, y, w - labelW, 20);
-    y += 24;
+        D(g_staticCopies, x, y + 5, labelW, 22);
+        D(g_editCopies, x + labelW, y, copiesW, rowH);
+        D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 140, 24);
+        y += rowH + gap;
+        D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
+        y += 10;
 
-    D(g_staticCopies, x, y + 5, labelW, 22);
-    D(g_editCopies, x + labelW, y, copiesW, rowH);
-    D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 140, 24);
-    y += rowH + gap;
-    D(g_btnPrint, x + w - maxBtnW, y - 2, maxBtnW, rowH + 4);
+        D(g_log, x, y + 5, labelW, 22);
+        y += rowH;
 
-    D(g_log, x, y + 5, labelW, 22);
-    y += rowH;
+        D(g_editLog, x, y, w, max(80, rc.bottom - y - margin));
 
-    D(g_editLog, x, y, w, max(80, rc.bottom - y - margin));
+        EndDeferWindowPos(hdwp);
 
-    EndDeferWindowPos(hdwp);
-
-    RedrawWindow(
-        hwnd, nullptr, nullptr,
-        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
-    );
-}
+        RedrawWindow(
+            hwnd, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
+        );
+    }
     LRESULT CALLBACK PrintToolPageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         switch (msg) {
         case WM_CREATE:
