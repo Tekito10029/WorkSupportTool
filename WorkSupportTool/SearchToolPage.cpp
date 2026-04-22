@@ -1884,9 +1884,21 @@ static void SetLeftTab(int tab, bool saveIni = true) {
 
 // -------------------- Settings load/save --------------------
 static void LoadSettings() {
-    auto rootsEx = IniReadStr(L"Main", L"RootsEx", L"");
-    if (!rootsEx.empty()) {
-        SetRootEntriesToListBox(DeserializeRootEntries(rootsEx));
+    std::vector<RootEntry> entries;
+
+    int rootsCount = IniReadInt(L"Main", L"RootsCount", 0);
+    if (rootsCount > 0) {
+        for (int i = 0; i < rootsCount; ++i) {
+            std::wstring keyPath = L"RootPath" + std::to_wstring(i);
+            std::wstring keyEnabled = L"RootEnabled" + std::to_wstring(i);
+
+            auto p = Trim(IniReadStr(L"Main", keyPath.c_str(), L""));
+            bool enabled = IniReadInt(L"Main", keyEnabled.c_str(), 1) != 0;
+
+            if (!p.empty()) {
+                entries.push_back({ p, enabled });
+            }
+        }
     }
     else {
         auto rootsIni = IniReadStr(L"Main", L"Roots", L"");
@@ -1898,27 +1910,28 @@ static void LoadSettings() {
             auto one = Trim(IniReadStr(L"Main", L"Root", L""));
             if (!one.empty()) rootsList.push_back(one);
         }
-        std::vector<RootEntry> entries;
+
         for (const auto& r : rootsList) {
             auto t = Trim(r);
             if (!t.empty()) entries.push_back({ t, true });
         }
-        SetRootEntriesToListBox(entries);
     }
+
+    SetRootEntriesToListBox(entries);
+
     SyncLegacyRootEditFromList();
-    // legacy edit is kept hidden
     auto enabledRoots = GetEnabledRootsFromListBox();
     if (!enabledRoots.empty()) SetWindowTextWStr(g_editRoot, enabledRoots[0]);
+
     g_lastExcludeFile = IniReadStr(L"Main", L"ExcludeFile", g_lastExcludeFile.empty() ? (GetExeDir() + L"\\exclude.txt") : g_lastExcludeFile);
     g_lastCsvFile = IniReadStr(L"Main", L"CsvFile", g_lastCsvFile.empty() ? (GetExeDir() + L"\\results.csv") : g_lastCsvFile);
     g_lastNameExcludeFile = IniReadStr(L"Main", L"NameExcludeFile", g_lastNameExcludeFile.empty() ? (GetExeDir() + L"\\name_exclude.txt") : g_lastNameExcludeFile);
 
     int mode = IniReadInt(L"Main", L"Mode", 0);
-    // 0:今日 1:過去N日 2:期間指定
     SendMessageW(g_cmbMode, CB_SETCURSEL, (WPARAM)max(0, min(2, mode)), 0);
     SetWindowTextWStr(g_editDays, IniReadStr(L"Main", L"Days", L"3"));
 
-    int tb = IniReadInt(L"Main", L"TimeBase", 0); // 0更新,1作成,2更新OR作成
+    int tb = IniReadInt(L"Main", L"TimeBase", 0);
     SendMessageW(g_cmbTimeBase, CB_SETCURSEL, (WPARAM)max(0, min(2, tb)), 0);
 
     SetChecked(g_chkXls, IniReadInt(L"Ext", L"xls", 1) != 0);
@@ -1938,7 +1951,6 @@ static void LoadSettings() {
     if (g_tabLeft) TabCtrl_SetCurSel(g_tabLeft, g_leftTab);
     if (g_sortCol < 0 || g_sortCol > 3) g_sortCol = 0;
 
-    // load folder exclude
     if (!g_lastExcludeFile.empty() && fs::exists(fs::path(g_lastExcludeFile))) {
         auto rootsForBase = GetRootsFromListBox();
         std::wstring rootStr = rootsForBase.empty() ? L"" : rootsForBase[0];
@@ -1946,7 +1958,6 @@ static void LoadSettings() {
         LoadExcludesFromFile(g_lastExcludeFile, base);
     }
 
-    // file-name patterns
     g_fileNamePatterns.clear();
     int n = IniReadInt(L"NameFilter", L"Count", 0);
     if (n <= 0) {
@@ -1971,9 +1982,36 @@ static void LoadSettings() {
 static void SaveSettings() {
     auto rootEntries = GetRootEntriesFromListBox();
     auto enabledRootItems = GetEnabledRootsFromListBox();
-    IniWriteStr(L"Main", L"RootsEx", SerializeRootEntries(rootEntries));
+
+    // 新方式: 1件ずつ保存
+    int oldCount = IniReadInt(L"Main", L"RootsCount", 0);
+    int newCount = (int)rootEntries.size();
+    IniWriteInt(L"Main", L"RootsCount", newCount);
+
+    int maxCount = (oldCount > newCount) ? oldCount : newCount;
+    if (maxCount < 200) maxCount = 200; // 以前の空キー掃除も兼ねる
+
+    for (int i = 0; i < maxCount; ++i) {
+        std::wstring keyPath = L"RootPath" + std::to_wstring(i);
+        std::wstring keyEnabled = L"RootEnabled" + std::to_wstring(i);
+
+        if (i < newCount) {
+            IniWriteStr(L"Main", keyPath.c_str(), rootEntries[(size_t)i].path);
+            IniWriteInt(L"Main", keyEnabled.c_str(), rootEntries[(size_t)i].enabled ? 1 : 0);
+        }
+        else {
+            WritePrivateProfileStringW(L"Main", keyPath.c_str(), nullptr, g_iniPath.c_str());
+            WritePrivateProfileStringW(L"Main", keyEnabled.c_str(), nullptr, g_iniPath.c_str());
+        }
+    }
+
+    // 旧方式の残骸を消す
+    WritePrivateProfileStringW(L"Main", L"RootsEx", nullptr, g_iniPath.c_str());
+
+    // 互換用: 有効なものだけ従来キーにも保存
     IniWriteStr(L"Main", L"Roots", JoinRootsForIni(enabledRootItems));
     IniWriteStr(L"Main", L"Root", enabledRootItems.empty() ? L"" : enabledRootItems[0]);
+
     IniWriteStr(L"Main", L"ExcludeFile", g_lastExcludeFile);
     IniWriteStr(L"Main", L"CsvFile", g_lastCsvFile);
     IniWriteStr(L"Main", L"NameExcludeFile", g_lastNameExcludeFile);
@@ -1996,13 +2034,13 @@ static void SaveSettings() {
     IniWriteInt(L"View", L"SortAsc", g_sortAsc ? 1 : 0);
     IniWriteInt(L"View", L"LeftTab", g_leftTab);
 
-    int oldCount = IniReadInt(L"NameFilter", L"Count", 0);
-    int newCount = (int)g_fileNamePatterns.size();
-    IniWriteInt(L"NameFilter", L"Count", newCount);
-    int maxCount = (oldCount > newCount) ? oldCount : newCount;
-    for (int i = 0; i < maxCount; ++i) {
+    int oldNameCount = IniReadInt(L"NameFilter", L"Count", 0);
+    int newNameCount = (int)g_fileNamePatterns.size();
+    IniWriteInt(L"NameFilter", L"Count", newNameCount);
+    int maxNameCount = (oldNameCount > newNameCount) ? oldNameCount : newNameCount;
+    for (int i = 0; i < maxNameCount; ++i) {
         std::wstring key = L"Item" + std::to_wstring(i);
-        if (i < newCount) IniWriteStr(L"NameFilter", key.c_str(), g_fileNamePatterns[(size_t)i]);
+        if (i < newNameCount) IniWriteStr(L"NameFilter", key.c_str(), g_fileNamePatterns[(size_t)i]);
         else WritePrivateProfileStringW(L"NameFilter", key.c_str(), nullptr, g_iniPath.c_str());
     }
 
@@ -2014,7 +2052,6 @@ static void SaveSettings() {
     SaveExcludesToFile(g_lastExcludeFile);
 }
 
-// -------------------- Search UI state --------------------
 static void SetSearchingUi(bool searching) {
     EnableWindow(g_btnSearch, searching ? FALSE : TRUE);
     EnableWindow(g_btnStop, searching ? TRUE : FALSE);
@@ -2049,7 +2086,6 @@ static void SetSearchingUi(bool searching) {
         Progress_SetMarquee(g_progress, searching);
     }
 }
-
 // -------------------- Layout --------------------
 
 static void DoLayout(HWND hwnd) {
