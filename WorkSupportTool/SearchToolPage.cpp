@@ -2142,7 +2142,7 @@ static void DoLayout(HWND hwnd) {
 
     // ---- Left panel common (tab) ----
     int y = padding;
-    const int tabH = 36;
+    const int tabH = 42;
     MoveWindow(g_tabLeft, padding, y, max(160, w - padding * 2), tabH, TRUE);
     y += tabH + gap;
 
