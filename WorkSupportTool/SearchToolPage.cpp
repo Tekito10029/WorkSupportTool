@@ -2793,9 +2793,11 @@ static void StartSearch() {
         return;
     }
 
+    SearchParams* threadParams = params.release();
     DWORD tid = 0;
-    g_hThread = CreateThread(nullptr, 0, SearchThreadProc, params.release(), 0, &tid);
+    g_hThread = CreateThread(nullptr, 0, SearchThreadProc, threadParams, 0, &tid);
     if (!g_hThread) {
+        delete threadParams;
         SetSearchingUi(false);
         SetStatus(L"[ERROR] スレッド作成に失敗しました");
     }
