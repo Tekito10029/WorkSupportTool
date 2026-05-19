@@ -29,7 +29,7 @@ RECT GetPageRect(HWND hwnd) {
     GetClientRect(hwnd, &rc);
 
     const int padding = 10;
-    const int tabH = 44;
+    const int tabH = 34;
 
     RECT page{
         padding,
@@ -45,7 +45,7 @@ void LayoutMain(HWND hwnd) {
     GetClientRect(hwnd, &rc);
 
     const int padding = 10;
-    const int tabH = 42;
+    const int tabH = 30;
 
     MoveWindow(g_tabMain, padding, padding, max(300, rc.right - padding * 2), tabH, TRUE);
 
