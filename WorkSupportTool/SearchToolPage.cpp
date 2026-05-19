@@ -188,6 +188,7 @@ static HWND g_hwndMain = nullptr;
 
 static HFONT g_hFontUi = nullptr;
 static HFONT g_hFontUiBold = nullptr;
+static HFONT g_hFontTabLeft = nullptr;
 
 static HWND g_tabLeft = nullptr;
 static int  g_leftTab = 0; // 0: 検索, 1: 除外
@@ -2944,8 +2945,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         DateTime_SetSystemtime(g_dtpTo, GDT_VALID, &st);
 
         // Left panel tab (Search / Excludes)
+        if (!g_hFontTabLeft) {
+            g_hFontTabLeft = CreateFontW(
+                -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        }
         g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
+        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(g_hFontTabLeft ? g_hFontTabLeft : hUiFont), TRUE);
         {
             TCITEMW ti{};
             ti.mask = TCIF_TEXT;
@@ -3491,6 +3499,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SaveSettings();
         if (g_hFontUi) { DeleteObject(g_hFontUi); g_hFontUi = nullptr; }
         if (g_hFontUiBold) { DeleteObject(g_hFontUiBold); g_hFontUiBold = nullptr; }
+        if (g_hFontTabLeft) { DeleteObject(g_hFontTabLeft); g_hFontTabLeft = nullptr; }
         if (GetParent(hwnd) == nullptr) {
             PostQuitMessage(0);
         }
