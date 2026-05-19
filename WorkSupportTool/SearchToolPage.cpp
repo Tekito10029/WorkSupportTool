@@ -153,8 +153,9 @@ static const UINT WM_APP_ADD_HIT = WM_APP + 1;
 static const UINT WM_APP_PROGRESS = WM_APP + 2;
 static const UINT WM_APP_FINISHED = WM_APP + 3;
 static const UINT WM_APP_THREADERR = WM_APP + 4;
+static const UINT WM_APP_TOTAL = WM_APP + 5;
 
-static const UINT WM_APP_SCANPATH = WM_APP + 5; // NEW: show current scanning folder
+static const UINT WM_APP_SCANPATH = WM_APP + 6; // NEW: show current scanning folder
 // -------------------- Models --------------------
 struct Hit {
     std::wstring timeText;        // 表示用（更新/作成どちらでも）
@@ -288,6 +289,7 @@ static std::wstring g_currentScanDir; // NEW: scanning folder
 static std::wstring g_lastExcludeFile;
 static std::wstring g_lastCsvFile;
 static std::wstring g_lastNameExcludeFile;
+static unsigned long long g_totalScanFiles = 0;
 
 static std::atomic<bool> g_stopRequested{ false };
 static std::atomic<bool> g_searching{ false };
@@ -2100,6 +2102,7 @@ static void SetSearchingUi(bool searching) {
     if (g_staticProgress && !searching) {
         SetWindowTextW(g_staticProgress, L"待機中");
     }
+    if (!searching) g_totalScanFiles = 0;
 }
 // -------------------- Layout --------------------
 
@@ -2648,9 +2651,30 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
 
     unsigned long long scanned = 0;
     unsigned long long hits = 0;
+    unsigned long long totalFiles = 0;
 
     std::wstring lastDir;
     int dirNotifyCountdown = 0;
+
+    // Pre-scan: count regular files for whole-progress display.
+    for (const auto& root : params->roots) {
+        if (g_stopRequested) break;
+        fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+        if (ec) continue;
+        for (auto end = fs::recursive_directory_iterator(); it != end; ++it) {
+            if (g_stopRequested) break;
+            const auto& entry = *it;
+            if (entry.is_directory(ec)) {
+                if (useFolderExcl) {
+                    auto dirNorm = NormalizePath(entry.path());
+                    if (IsExcludedDir(dirNorm)) it.disable_recursion_pending();
+                }
+                continue;
+            }
+            if (entry.is_regular_file(ec)) totalFiles++;
+        }
+    }
+    if (IsWindow(g_hwndMain)) PostMessageW(g_hwndMain, WM_APP_TOTAL, (WPARAM)totalFiles, 0);
 
     for (const auto& root : params->roots) {
         if (g_stopRequested) break;
@@ -2778,6 +2802,8 @@ static void StartSearch() {
 
     ClearResultsUI();
     SetSearchingUi(true);
+    g_totalScanFiles = 0;
+    if (g_staticProgress) SetWindowTextW(g_staticProgress, L"進捗: 集計中...");
 
     TimeBase tb = GetTimeBase();
     SetListViewTimeHeader(tb);
@@ -2903,7 +2929,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
-        HFONT hTabFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_cmbTimeBase, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -2922,7 +2947,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // Left panel tab (Search / Excludes)
         g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
-        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(hTabFont ? hTabFont : hUiFont), TRUE);
         {
             TCITEMW ti{};
             ti.mask = TCIF_TEXT;
@@ -2931,7 +2955,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
-            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(120, 28));
         }
 
         // Advanced frames (behind controls) - used to visually separate sections
@@ -3026,7 +3049,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         for (HWND h : controls) {
             if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         }
-        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(hTabFont ? hTabFont : hUiFont), TRUE);
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
         // Paths: settings.ini / exclude.txt / results.csv are stored under LocalAppData to avoid server permission issues
@@ -3393,17 +3415,28 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
 
+    case WM_APP_TOTAL:
+    {
+        g_totalScanFiles = (unsigned long long)wParam;
+        return 0;
+    }
+
     case WM_APP_PROGRESS:
     {
         unsigned long long scanned = (unsigned long long)wParam;
         unsigned long long hits = (unsigned long long)lParam;
+        int percent = 0;
+        if (g_totalScanFiles > 0) {
+            percent = (int)((scanned * 100ULL) / g_totalScanFiles);
+            if (percent > 100) percent = 100;
+        }
         if (g_staticProgress) {
-            std::wstring prog = L"走査: " + std::to_wstring(scanned) + L" / ヒット: " + std::to_wstring(hits);
+            std::wstring prog = L"進捗: " + std::to_wstring(percent) + L"%  (" + std::to_wstring(scanned) + L"/" + std::to_wstring(g_totalScanFiles) + L")  ヒット: " + std::to_wstring(hits);
             SetWindowTextW(g_staticProgress, prog.c_str());
         }
         if (g_progress) {
             SendMessageW(g_progress, PBM_SETRANGE32, 0, 100);
-            SendMessageW(g_progress, PBM_SETPOS, (WPARAM)(scanned % 101ULL), 0);
+            SendMessageW(g_progress, PBM_SETPOS, (WPARAM)percent, 0);
         }
 
         std::wstring modeText = GetModeTextForStatus();
