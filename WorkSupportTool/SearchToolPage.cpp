@@ -1873,7 +1873,6 @@ static void ApplyLeftTabVisibility() {
 
     // Keep enable/disable consistent when visible.
     UpdateUiEnableStates();
-    if (g_hwndMain) InvalidateRect(g_hwndMain, nullptr, TRUE);
 }
 
 static void SetLeftTab(int tab, bool saveIni = true) {
