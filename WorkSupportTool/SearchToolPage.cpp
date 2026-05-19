@@ -2144,7 +2144,6 @@ static void DoLayout(HWND hwnd) {
     int y = padding;
     const int tabH = 36;
     MoveWindow(g_tabLeft, padding, y, max(160, w - padding * 2), tabH, TRUE);
-    //TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(110, 28));
     y += tabH + gap;
 
     // ---- Left panel: Search tab ----
