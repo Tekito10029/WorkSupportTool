@@ -2414,7 +2414,7 @@ static void DoLayout(HWND hwnd) {
 
     // Progress
     int progH = 20;
-    int progTextW = 220;
+    int progTextW = 300;
     int progW = max(80, rightW - gap - progTextW);
     MoveWindow(g_progress, rightX, yR, progW, progH, TRUE);
     MoveWindow(g_staticProgress, rightX + progW + gap, yR + 1, max(80, rightW - progW - gap), progH, TRUE);
@@ -2903,10 +2903,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
-        HFONT hTabFont = CreateFontW(
-            -14, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        HFONT hTabFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_cmbTimeBase, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -2934,7 +2931,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
-            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(110, 26));
+            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(120, 28));
         }
 
         // Advanced frames (behind controls) - used to visually separate sections
@@ -2998,7 +2995,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)RGB(238, 242, 247));
         SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)RGB(0, 120, 215));
         Progress_SetMarquee(g_progress, false);
-        g_staticProgress = CreateWindowW(L"STATIC", L"待機中", WS_CHILD | WS_VISIBLE | SS_LEFT,
+        g_staticProgress = CreateWindowW(L"STATIC", L"待機中", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
             0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PROGRESS, g_hInst, nullptr);
 
         // Result filter (NEW)
