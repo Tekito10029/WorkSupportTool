@@ -2092,7 +2092,10 @@ static void SetSearchingUi(bool searching) {
     UpdateUiEnableStates();
 
     if (g_progress) {
-        Progress_SetMarquee(g_progress, searching);
+        Progress_SetMarquee(g_progress, false);
+        if (!searching) {
+            SendMessageW(g_progress, PBM_SETPOS, 0, 0);
+        }
     }
     if (g_staticProgress && !searching) {
         SetWindowTextW(g_staticProgress, L"待機中");
@@ -2679,7 +2682,7 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
             if (!entry.is_regular_file(ec)) continue;
 
             scanned++;
-            if ((scanned % 300) == 0 && IsWindow(g_hwndMain)) {
+            if ((scanned % 20) == 0 && IsWindow(g_hwndMain)) {
                 PostMessageW(g_hwndMain, WM_APP_PROGRESS, (WPARAM)scanned, (LPARAM)hits);
             }
 
@@ -2721,6 +2724,9 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
             hit->path = p.wstring();
 
             hits++;
+            if (IsWindow(g_hwndMain)) {
+                PostMessageW(g_hwndMain, WM_APP_PROGRESS, (WPARAM)scanned, (LPARAM)hits);
+            }
             if (IsWindow(g_hwndMain)) {
                 PostMessageW(g_hwndMain, WM_APP_ADD_HIT, 0, (LPARAM)hit.release());
             }
@@ -3012,7 +3018,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticFrom, g_staticTo, g_staticFilter,
             g_staticExclFolder, g_staticExclPattern, g_staticExclName,
             g_editRoot, g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
-            g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo, g_tabLeft,
+            g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo,
             g_frameFolderExcl, g_frameNameExcl,
             g_chkEnableFolderExcl, g_listExcludes, g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
             g_editExclPattern, g_btnAddPattern,
@@ -3023,6 +3029,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         for (HWND h : controls) {
             if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         }
+        SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(hTabFont ? hTabFont : hUiFont), TRUE);
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
         // Paths: settings.ini / exclude.txt / results.csv are stored under LocalAppData to avoid server permission issues
@@ -3396,6 +3403,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (g_staticProgress) {
             std::wstring prog = L"走査: " + std::to_wstring(scanned) + L" / ヒット: " + std::to_wstring(hits);
             SetWindowTextW(g_staticProgress, prog.c_str());
+        }
+        if (g_progress) {
+            SendMessageW(g_progress, PBM_SETRANGE32, 0, 100);
+            SendMessageW(g_progress, PBM_SETPOS, (WPARAM)(scanned % 101ULL), 0);
         }
 
         std::wstring modeText = GetModeTextForStatus();
