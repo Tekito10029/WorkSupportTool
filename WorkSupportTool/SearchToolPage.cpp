@@ -2803,7 +2803,7 @@ static void StartSearch() {
     ClearResultsUI();
     SetSearchingUi(true);
     g_totalScanFiles = 0;
-    if (g_staticProgress) SetWindowTextW(g_staticProgress, L"進捗: 集計中...");
+    if (g_staticProgress) SetWindowTextW(g_staticProgress, L"進捗: 開始中...");
 
     TimeBase tb = GetTimeBase();
     SetListViewTimeHeader(tb);
