@@ -105,6 +105,7 @@ enum : int {
 
     // view
     IDC_PROGRESS,
+    IDC_STATIC_PROGRESS,
     IDC_LIST_RESULTS,
     IDC_STATUS,
 
@@ -253,6 +254,7 @@ static HWND g_btnSearch = nullptr;
 static HWND g_btnStop = nullptr;
 static HWND g_btnExportCsv = nullptr;
 static HWND g_progress = nullptr;
+static HWND g_staticProgress = nullptr;
 static HWND g_listResults = nullptr;
 static HWND g_status = nullptr;
 
@@ -2092,6 +2094,9 @@ static void SetSearchingUi(bool searching) {
     if (g_progress) {
         Progress_SetMarquee(g_progress, searching);
     }
+    if (g_staticProgress && !searching) {
+        SetWindowTextW(g_staticProgress, L"待機中");
+    }
 }
 // -------------------- Layout --------------------
 
@@ -2406,7 +2411,10 @@ static void DoLayout(HWND hwnd) {
 
     // Progress
     int progH = 20;
-    MoveWindow(g_progress, rightX, yR, max(80, rightW), progH, TRUE);
+    int progTextW = 220;
+    int progW = max(80, rightW - gap - progTextW);
+    MoveWindow(g_progress, rightX, yR, progW, progH, TRUE);
+    MoveWindow(g_staticProgress, rightX + progW + gap, yR + 1, max(80, rightW - progW - gap), progH, TRUE);
     yR += progH + gap;
 
     // Filter
@@ -2890,7 +2898,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
         HFONT hTabFont = CreateFontW(
-            -17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            -14, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -2920,7 +2928,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
-            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(130, 30));
+            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(110, 26));
         }
 
         // Advanced frames (behind controls) - used to visually separate sections
@@ -2984,6 +2992,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)RGB(238, 242, 247));
         SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)RGB(0, 120, 215));
         Progress_SetMarquee(g_progress, false);
+        g_staticProgress = CreateWindowW(L"STATIC", L"待機中", WS_CHILD | WS_VISIBLE | SS_LEFT,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PROGRESS, g_hInst, nullptr);
 
         // Result filter (NEW)
         g_editFilter = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
@@ -3008,7 +3018,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_editExclPattern, g_btnAddPattern,
             g_chkEnableNameExcl, g_chkNameIncludeExt, g_editFNamePattern, g_btnAddFName, g_btnRemoveFName, g_btnFNameUp, g_btnFNameDown, g_listFName, g_btnLoadFNameExcl, g_btnSaveFNameExcl,
             GetDlgItem(hwnd, IDC_GRP_EXT), g_chkXls, g_chkXlsx, g_chkXlsm, g_chkXlsb, g_chkXltx, g_chkXltm,
-            g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_editFilter, g_listResults, g_status
+            g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_staticProgress, g_editFilter, g_listResults, g_status
         };
         for (HWND h : controls) {
             if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -3383,6 +3393,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     {
         unsigned long long scanned = (unsigned long long)wParam;
         unsigned long long hits = (unsigned long long)lParam;
+        if (g_staticProgress) {
+            std::wstring prog = L"走査: " + std::to_wstring(scanned) + L" / ヒット: " + std::to_wstring(hits);
+            SetWindowTextW(g_staticProgress, prog.c_str());
+        }
 
         std::wstring modeText = GetModeTextForStatus();
         {
