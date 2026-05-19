@@ -2890,9 +2890,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
         HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
         HFONT hTabFont = CreateFontW(
-            -16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+            -17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_cmbTimeBase, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
@@ -2920,7 +2920,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
-            //TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(110, 28));
+            TabCtrl_SetItemSize(g_tabLeft, 0, MAKELPARAM(130, 30));
         }
 
         // Advanced frames (behind controls) - used to visually separate sections
@@ -2981,6 +2981,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_progress = CreateWindowW(PROGRESS_CLASSW, nullptr,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
             0, 0, 0, 0, hwnd, (HMENU)IDC_PROGRESS, g_hInst, nullptr);
+        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)RGB(238, 242, 247));
+        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)RGB(0, 120, 215));
         Progress_SetMarquee(g_progress, false);
 
         // Result filter (NEW)

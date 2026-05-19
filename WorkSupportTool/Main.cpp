@@ -71,9 +71,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         if (!g_hFontTab) {
             g_hFontTab = CreateFontW(
-                -16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+                -18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         }
         HFONT hFont = g_hFontTab ? g_hFontTab : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
@@ -88,8 +88,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         ti.pszText = const_cast<LPWSTR>(L"印刷ツール");
         TabCtrl_InsertItem(g_tabMain, 1, &ti);
         TabCtrl_SetCurSel(g_tabMain, 0);
-        //TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(110, 28));
-        //TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(110, 28));
+        TabCtrl_SetItemSize(g_tabMain, 0, MAKELPARAM(170, 34));
 
         RECT page = GetPageRect(hwnd);
         g_hwndSearchPage = CreateSearchToolPage(hwnd, g_hInst, page);
