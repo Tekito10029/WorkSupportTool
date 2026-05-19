@@ -849,6 +849,11 @@ namespace {
 
         std::wstring oldDefaultPrinter = GetDefaultPrinterName();
         bool changedDefaultPrinter = false;
+        auto restoreDefaultPrinter = [&]() {
+            if (changedDefaultPrinter && !oldDefaultPrinter.empty()) {
+                SetDefaultPrinterName(oldDefaultPrinter);
+            }
+        };
 
         if (!selectedPrinter.empty() && _wcsicmp(oldDefaultPrinter.c_str(), selectedPrinter.c_str()) != 0) {
             changedDefaultPrinter = SetDefaultPrinterName(selectedPrinter);
@@ -866,6 +871,7 @@ namespace {
         if (!GetDispatchProperty(app, L"Workbooks", &workbooks)) {
             outMessage = L"Workbooks の取得に失敗しました。";
             app->Release();
+            restoreDefaultPrinter();
             return false;
         }
 
@@ -874,6 +880,7 @@ namespace {
             outMessage = L"ブックを開けませんでした。";
             workbooks->Release();
             app->Release();
+            restoreDefaultPrinter();
             return false;
         }
 
@@ -950,9 +957,7 @@ namespace {
         CallMethod(app, L"Quit");
         app->Release();
 
-        if (changedDefaultPrinter && !oldDefaultPrinter.empty()) {
-            SetDefaultPrinterName(oldDefaultPrinter);
-        }
+        restoreDefaultPrinter();
 
         return !printed.empty();
     }

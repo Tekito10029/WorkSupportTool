@@ -142,7 +142,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     g_hInst = hInstance;
 
     const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    (void)hrInit;
+    const bool comInitialized = SUCCEEDED(hrInit);
 
     INITCOMMONCONTROLSEX icc{};
     icc.dwSize = sizeof(icc);
@@ -169,7 +169,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     );
 
     if (!hwnd) {
-        CoUninitialize();
+        if (comInitialized) CoUninitialize();
         return 0;
     }
 
@@ -182,6 +182,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
         DispatchMessageW(&msg);
     }
 
-    CoUninitialize();
+    if (comInitialized) CoUninitialize();
     return 0;
 }

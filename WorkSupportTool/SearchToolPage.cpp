@@ -171,6 +171,14 @@ struct ExcludeRule {
 };
 
 enum class TimeBase { LastWrite = 0, Creation = 1, Either = 2 };
+struct SearchParams {
+    std::vector<fs::path> roots;
+    bool useFolderExcl = false;
+    bool useNameExcl = false;
+    std::chrono::system_clock::time_point rangeStart{};
+    std::chrono::system_clock::time_point rangeEnd{};
+    TimeBase timeBase = TimeBase::LastWrite;
+};
 
 // -------------------- Globals --------------------
 static HINSTANCE g_hInst = nullptr;
@@ -2612,35 +2620,21 @@ static void ShowFNameContextMenu(HWND hwnd, POINT ptScreen) {
 }
 
 // -------------------- Search thread --------------------
-static DWORD WINAPI SearchThreadProc(LPVOID) {
+static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
+    std::unique_ptr<SearchParams> params(reinterpret_cast<SearchParams*>(lpParam));
     g_stopRequested = false;
     g_searching = true;
 
-    auto rootItems = SplitRootsText(GetWindowTextWStr(g_editRoot));
-    if (rootItems.empty()) {
+    if (!params || params->roots.empty()) {
         PostMessageW(g_hwndMain, WM_APP_FINISHED, 0, 0);
         return 0;
     }
-    std::vector<fs::path> roots;
     std::error_code ec;
-    for (auto& s : rootItems) {
-        fs::path r = NormalizePath(fs::path(s));
-        if (fs::exists(r, ec) && fs::is_directory(r, ec)) roots.push_back(r);
-    }
-    if (roots.empty()) {
-        PostMessageW(g_hwndMain, WM_APP_THREADERR, 0, (LPARAM)L"検索元フォルダが存在しません");
-        PostMessageW(g_hwndMain, WM_APP_FINISHED, 0, 0);
-        return 0;
-    }
-    const bool useFolderExcl = IsChecked(g_chkEnableFolderExcl);
-    const bool useNameExcl = IsChecked(g_chkEnableNameExcl);
-
-    // date range
-    std::chrono::system_clock::time_point s, e;
-    GetActiveDateRange(s, e);
-
-    // time base
-    TimeBase tb = GetTimeBase();
+    const bool useFolderExcl = params->useFolderExcl;
+    const bool useNameExcl = params->useNameExcl;
+    const auto s = params->rangeStart;
+    const auto e = params->rangeEnd;
+    const TimeBase tb = params->timeBase;
 
     unsigned long long scanned = 0;
     unsigned long long hits = 0;
@@ -2648,7 +2642,7 @@ static DWORD WINAPI SearchThreadProc(LPVOID) {
     std::wstring lastDir;
     int dirNotifyCountdown = 0;
 
-    for (const auto& root : roots) {
+    for (const auto& root : params->roots) {
         if (g_stopRequested) break;
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
         if (ec) continue;
@@ -2781,8 +2775,26 @@ static void StartSearch() {
     std::wstring modeText = GetModeTextForStatus();
     SetStatus(L"検索中（" + modeText + L" / " + TimeBaseText(tb) + L"）...");
 
+    auto params = std::make_unique<SearchParams>();
+    params->useFolderExcl = IsChecked(g_chkEnableFolderExcl);
+    params->useNameExcl = IsChecked(g_chkEnableNameExcl);
+    GetActiveDateRange(params->rangeStart, params->rangeEnd);
+    params->timeBase = tb;
+
+    auto rootItems = SplitRootsText(GetWindowTextWStr(g_editRoot));
+    for (auto& s : rootItems) {
+        std::error_code ec;
+        fs::path r = NormalizePath(fs::path(s));
+        if (fs::exists(r, ec) && fs::is_directory(r, ec)) params->roots.push_back(r);
+    }
+    if (params->roots.empty()) {
+        SetSearchingUi(false);
+        SetStatus(L"[ERROR] 検索元フォルダが存在しません");
+        return;
+    }
+
     DWORD tid = 0;
-    g_hThread = CreateThread(nullptr, 0, SearchThreadProc, nullptr, 0, &tid);
+    g_hThread = CreateThread(nullptr, 0, SearchThreadProc, params.release(), 0, &tid);
     if (!g_hThread) {
         SetSearchingUi(false);
         SetStatus(L"[ERROR] スレッド作成に失敗しました");
