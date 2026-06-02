@@ -1155,7 +1155,11 @@ namespace {
 
         // 対象ブック一覧
         D(g_listFiles, x, y, w, 150);
-        y += 150 + gap;
+        y += 100 + gap;
+
+        // 現在の削除対象
+        D(g_staticRemoveTarget, x, y, w, targetH);
+        y += targetH + gap;
 
         // ファイル操作ボタン
         int btnX = x;
@@ -1166,11 +1170,7 @@ namespace {
         btnX += smallBtnW + gap;
 
         D(g_btnClearFiles, btnX, y, smallBtnW, rowH);
-        y += rowH + 6;
-
-        // 現在の削除対象
-        D(g_staticRemoveTarget, x, y, w, targetH);
-        y += targetH + gap;
+        y += rowH + 50;
 
         // 印刷シート名
         D(g_staticSheets, x, y + 5, labelW, 22);
@@ -1178,15 +1178,15 @@ namespace {
         D(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH);
         y += 56;
 
-        D(g_staticSheetsHint, x + labelW, y, w - labelW, 20);
-        y += 24;
+        D(g_staticSheetsHint, x + labelW, y, w - labelW, 24);
+        //y += 24;
 
         // 部数/プレビュー/印刷
         D(g_staticCopies, x, y + 5, labelW, 22);
         D(g_editCopies, x + labelW, y, copiesW, rowH);
         D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 140, 24);
         D(g_btnPrint, x + w - btnW, y - 2, btnW, rowH + 4);
-        y += rowH + gap;
+        y += rowH + 25;
 
         // ログ
         D(g_log, x, y + 5, labelW, 22);
@@ -1228,14 +1228,15 @@ namespace {
             g_listFiles = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FILES, g_hInst, nullptr);
+            g_staticRemoveTarget = CreateWindowW(L"STATIC", L"対象: なし",
+                WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_REMOVE_TARGET, g_hInst, nullptr);
             g_btnAddFiles = CreateWindowW(L"BUTTON", L"ファイル追加",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FILES, g_hInst, nullptr);
-            g_btnRemoveFile = CreateWindowW(L"BUTTON", L"選択ブック削除",
+            g_btnRemoveFile = CreateWindowW(L"BUTTON", L"対象ブック除外",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FILE, g_hInst, nullptr);
             g_btnClearFiles = CreateWindowW(L"BUTTON", L"一覧クリア",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CLEAR_FILES, g_hInst, nullptr);
-            g_staticRemoveTarget = CreateWindowW(L"STATIC", L"対象: なし",
-                WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_REMOVE_TARGET, g_hInst, nullptr);
+
 
             g_staticSheets = CreateWindowW(L"STATIC", L"2. 印刷シート名",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_SHEETS, g_hInst, nullptr);
