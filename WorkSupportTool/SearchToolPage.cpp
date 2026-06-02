@@ -15,11 +15,13 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <shlwapi.h>
+#include <uxtheme.h>
 
 #include <filesystem>
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <iterator>
 #include <chrono>
 #include <atomic>
 #include <memory>
@@ -30,13 +32,40 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace fs = std::filesystem;
 
+
+namespace Theme {
+constexpr COLORREF AppBg = RGB(245, 247, 250);
+constexpr COLORREF CardBg = RGB(255, 255, 255);
+constexpr COLORREF Border = RGB(221, 227, 234);
+constexpr COLORREF Text = RGB(31, 41, 55);
+constexpr COLORREF MutedText = RGB(107, 114, 128);
+constexpr COLORREF Primary = RGB(37, 99, 235);
+constexpr COLORREF PrimaryHot = RGB(29, 78, 216);
+constexpr COLORREF NeutralButton = RGB(255, 255, 255);
+constexpr COLORREF NeutralButtonHot = RGB(243, 246, 251);
+constexpr COLORREF NeutralButtonPressed = RGB(232, 238, 248);
+constexpr COLORREF CsvButton = RGB(118, 255, 118);
+constexpr COLORREF CsvButtonHot = RGB(96, 235, 96);
+constexpr COLORREF CsvButtonPressed = RGB(72, 205, 72);
+constexpr COLORREF CsvButtonBorder = RGB(52, 180, 52);
+constexpr COLORREF Danger = RGB(220, 38, 38);
+constexpr COLORREF DangerHot = RGB(185, 28, 28);
+constexpr COLORREF DisabledBg = RGB(229, 231, 235);
+constexpr COLORREF DisabledText = RGB(156, 163, 175);
+constexpr COLORREF ListAltBg = RGB(248, 250, 252);
+constexpr COLORREF SelectedBg = RGB(219, 234, 254);
+constexpr COLORREF SelectedText = RGB(30, 64, 175);
+constexpr COLORREF ProgressBg = RGB(229, 231, 235);
+}
+
+
 // -------------------- IDs --------------------
 enum : int {
-    IDC_EDIT_ROOT = 101,
-    IDC_BTN_BROWSE_ROOT,
+    IDC_BTN_BROWSE_ROOT = 102,
 
     // Roots list (NEW - intuitive multi-folder)
     IDC_LIST_ROOTS,
@@ -122,8 +151,6 @@ enum : int {
     // Left panel tab (Search / Excludes)
     IDC_TAB_LEFT,
 
-    // Advanced (legacy; unused in tab UI)
-    IDC_BTN_TOGGLE_ADVANCED,
 };
 
 // Popup menu commands (not control IDs)
@@ -156,6 +183,9 @@ static const UINT WM_APP_THREADERR = WM_APP + 4;
 static const UINT WM_APP_TOTAL = WM_APP + 5;
 
 static const UINT WM_APP_SCANPATH = WM_APP + 6; // NEW: show current scanning folder
+
+static void CloseModernCalendarPopup();
+
 // -------------------- Models --------------------
 struct Hit {
     std::wstring timeText;        // 表示用（更新/作成どちらでも）
@@ -189,6 +219,10 @@ static HWND g_hwndMain = nullptr;
 static HFONT g_hFontUi = nullptr;
 static HFONT g_hFontUiBold = nullptr;
 static HFONT g_hFontTabLeft = nullptr;
+static HBRUSH g_hBrushAppBg = nullptr;
+static HBRUSH g_hBrushCardBg = nullptr;
+static HBRUSH g_hBrushEditBg = nullptr;
+static HIMAGELIST g_hResultsRowImageList = nullptr;
 
 static HWND g_tabLeft = nullptr;
 static int  g_leftTab = 0; // 0: 検索, 1: 除外
@@ -201,7 +235,6 @@ static HWND g_staticExclFolder = nullptr;
 static HWND g_staticExclPattern = nullptr;
 static HWND g_staticExclName = nullptr;
 
-static HWND g_editRoot = nullptr;      // legacy (kept but hidden)
 static HWND g_btnBrowseRoot = nullptr; // repurposed as Add...
 static HWND g_listRoots = nullptr;
 static HWND g_btnRootRemove = nullptr;
@@ -269,6 +302,11 @@ static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
 static HWND g_dtpFrom = nullptr;
 static HWND g_dtpTo = nullptr;
+static SYSTEMTIME g_dateFrom{};
+static SYSTEMTIME g_dateTo{};
+static HWND g_calendarPopup = nullptr;
+static HWND g_calendarTarget = nullptr;
+static SYSTEMTIME g_calendarMonth{};
 
 // advanced toggle
 
@@ -326,13 +364,13 @@ static std::wstring Trim(const std::wstring& s);
 static std::wstring GetWindowTextWStr(HWND h);
 static void SetWindowTextWStr(HWND h, const std::wstring& s);
 static fs::path NormalizePath(const fs::path& p);
-static void SyncLegacyRootEditFromList();
 
 // ---- Forward declarations (used before definitions) ----
 // Needed because some handlers/commit functions appear before these are defined.
 static void RefreshFileNameListBox();
 static void RebuildFileNameExcludeCache();
 static void SaveSettings();
+static bool ShowWindowIfNeeded(HWND hwnd, int cmdShow);
 // -------------------------------------------------------
 
 // ---- Roots list helpers (intuitive multi-folder) ----
@@ -350,17 +388,6 @@ static std::vector<std::wstring> GetRootsFromListBox()
         if (!t.empty()) out.push_back(t);
     }
     return out;
-}
-
-static void SetRootsToListBox(const std::vector<std::wstring>& roots)
-{
-    if (!g_listRoots) return;
-    SendMessageW(g_listRoots, LB_RESETCONTENT, 0, 0);
-    for (const auto& s : roots) {
-        auto t = Trim(s);
-        if (t.empty()) continue;
-        SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)t.c_str());
-    }
 }
 
 static const wchar_t* kRootEnabledPrefix = L"[有効] ";
@@ -436,44 +463,6 @@ static std::vector<std::wstring> GetEnabledRootsFromListBox()
     return out;
 }
 
-static std::wstring SerializeRootEntries(const std::vector<RootEntry>& entries)
-{
-    std::wstring out;
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (i) out += L"\n";
-        out += (entries[i].enabled ? L"1\t" : L"0\t");
-        out += entries[i].path;
-    }
-    return out;
-}
-
-static std::vector<RootEntry> DeserializeRootEntries(const std::wstring& text)
-{
-    std::vector<RootEntry> out;
-    size_t pos = 0;
-    while (pos <= text.size()) {
-        size_t nl = text.find(L'\n', pos);
-        std::wstring line = (nl == std::wstring::npos) ? text.substr(pos) : text.substr(pos, nl - pos);
-        if (!line.empty() && line.back() == L'\r') line.pop_back();
-        pos = (nl == std::wstring::npos) ? text.size() + 1 : nl + 1;
-
-        line = Trim(line);
-        if (line.empty()) continue;
-
-        RootEntry e;
-        if (line.size() >= 2 && (line[0] == L'0' || line[0] == L'1') && line[1] == L'\t') {
-            e.enabled = (line[0] == L'1');
-            e.path = Trim(line.substr(2));
-        }
-        else {
-            e.enabled = true;
-            e.path = Trim(line);
-        }
-        if (!e.path.empty()) out.push_back(std::move(e));
-    }
-    return out;
-}
-
 static bool ToggleSelectedRootEnabled()
 {
     if (!g_listRoots) return false;
@@ -494,7 +483,6 @@ static bool ToggleSelectedRootEnabled()
     int idx = (int)SendMessageW(g_listRoots, LB_INSERTSTRING, (WPARAM)sel, (LPARAM)disp.c_str());
     SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
 
-    SyncLegacyRootEditFromList();
     return true;
 }
 
@@ -536,13 +524,6 @@ static void MoveRootItem(int from, int to)
     SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
 }
 
-static std::vector<fs::path> GetRootPathsNormalizedFromUI()
-{
-    std::vector<fs::path> roots;
-    auto lines = GetEnabledRootsFromListBox();
-    for (auto& s : lines) roots.push_back(NormalizePath(fs::path(s)));
-    return roots;
-}
 // ---------------------------------------------------
 
 static std::vector<std::wstring> SplitRootsText(const std::wstring& text)
@@ -585,38 +566,6 @@ static std::wstring JoinRootsForIni(const std::vector<std::wstring>& roots)
     return out;
 }
 
-static void SyncLegacyRootEditFromList()
-{
-    // Search thread currently reads g_editRoot. Keep it in sync with enabled roots only.
-    auto roots = GetEnabledRootsFromListBox();
-    SetWindowTextWStr(g_editRoot, JoinRootsForIni(roots)); // '|' separated is OK for SplitRootsText
-}
-
-static std::vector<fs::path> GetRootPathsNormalized()
-{
-    std::vector<fs::path> roots;
-    auto items = SplitRootsText(GetWindowTextWStr(g_editRoot));
-    for (auto& s : items) roots.push_back(NormalizePath(fs::path(s)));
-    return roots;
-}
-
-static void AppendRootToEditIfMissing(const std::wstring& folderPath)
-{
-    auto items = SplitRootsText(GetWindowTextWStr(g_editRoot));
-    std::wstring lowNew = ToLower(Trim(folderPath));
-    for (auto& s : items) {
-        if (ToLower(Trim(s)) == lowNew) return;
-    }
-    items.push_back(Trim(folderPath));
-
-    // UIは1行のまま：';'区切りで表示
-    std::wstring disp;
-    for (size_t i = 0; i < items.size(); ++i) {
-        if (i) disp += L"; ";
-        disp += items[i];
-    }
-    SetWindowTextWStr(g_editRoot, disp);
-}
 static std::wstring GetWindowTextWStr(HWND h) {
     int len = GetWindowTextLengthW(h);
     std::wstring s(len, L'\0');
@@ -733,10 +682,9 @@ static void GetActiveDateRange(std::chrono::system_clock::time_point& outS,
     }
 
     // mode == 2: 期間指定（カレンダー）
-    SYSTEMTIME stFrom{}, stTo{};
-    if (DateTime_GetSystemtime(g_dtpFrom, &stFrom) != GDT_VALID ||
-        DateTime_GetSystemtime(g_dtpTo, &stTo) != GDT_VALID)
-    {
+    SYSTEMTIME stFrom = g_dateFrom;
+    SYSTEMTIME stTo = g_dateTo;
+    if (stFrom.wYear == 0 || stTo.wYear == 0) {
         // 万一取れない場合は「今日」にフォールバック
         GetLocalDayRangePastNDays(1, outS, outE);
         return;
@@ -836,14 +784,6 @@ static bool GetFileTimesSysClock(const std::wstring& path,
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return false;
     outWrite = FileTimeToSysClock(fad.ftLastWriteTime);
     outCreate = FileTimeToSysClock(fad.ftCreationTime);
-    return true;
-}
-
-static bool GetFileTimeSysClock(const std::wstring& path, TimeBase tb, std::chrono::system_clock::time_point& outTp)
-{
-    std::chrono::system_clock::time_point w, c;
-    if (!GetFileTimesSysClock(path, w, c)) return false;
-    outTp = (tb == TimeBase::Creation) ? c : w;
     return true;
 }
 
@@ -1429,25 +1369,25 @@ static bool ExportResultsCsv(const std::wstring& filePath, TimeBase tb) {
 
 // -------------------- ListView --------------------
 static void InitListViewColumns(HWND lv) {
-    ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+    ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP);
 
     LVCOLUMNW col{};
-    col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+    col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM | LVCF_FMT;
 
     col.pszText = (LPWSTR)L"日時";
-    col.cx = 170; col.iSubItem = 0;
+    col.cx = 170; col.iSubItem = 0; col.fmt = LVCFMT_LEFT;
     ListView_InsertColumn(lv, 0, &col);
 
     col.pszText = (LPWSTR)L"KB";
-    col.cx = 80; col.iSubItem = 1;
+    col.cx = 80; col.iSubItem = 1; col.fmt = LVCFMT_RIGHT;
     ListView_InsertColumn(lv, 1, &col);
 
     col.pszText = (LPWSTR)L"ファイル名";
-    col.cx = 240; col.iSubItem = 2;
+    col.cx = 240; col.iSubItem = 2; col.fmt = LVCFMT_LEFT;
     ListView_InsertColumn(lv, 2, &col);
 
     col.pszText = (LPWSTR)L"パス";
-    col.cx = 680; col.iSubItem = 3;
+    col.cx = 680; col.iSubItem = 3; col.fmt = LVCFMT_LEFT;
     ListView_InsertColumn(lv, 3, &col);
 }
 
@@ -1786,15 +1726,16 @@ static void UpdateUiEnableStates() {
 
     bool useDays = (mode == 1);
     bool useCal = (mode == 2);
+    if (g_leftTab != 0 || !useCal) CloseModernCalendarPopup();
 
     if (g_leftTab != 0) {
         // 除外タブでは、検索期間系は非表示/無効（誤って復活表示しないようにする）
         EnableWindow(g_editDays, FALSE);
         EnableWindow(g_staticDays, FALSE);
-        ShowWindow(g_staticFrom, SW_HIDE);
-        ShowWindow(g_staticTo, SW_HIDE);
-        ShowWindow(g_dtpFrom, SW_HIDE);
-        ShowWindow(g_dtpTo, SW_HIDE);
+        ShowWindowIfNeeded(g_staticFrom, SW_HIDE);
+        ShowWindowIfNeeded(g_staticTo, SW_HIDE);
+        ShowWindowIfNeeded(g_dtpFrom, SW_HIDE);
+        ShowWindowIfNeeded(g_dtpTo, SW_HIDE);
     }
     else {
         EnableWindow(g_editDays, useDays);
@@ -1802,14 +1743,902 @@ static void UpdateUiEnableStates() {
 
         EnableWindow(g_dtpFrom, useCal);
         EnableWindow(g_dtpTo, useCal);
-        ShowWindow(g_staticFrom, useCal ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_staticTo, useCal ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_dtpFrom, useCal ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_dtpTo, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_staticFrom, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_staticTo, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_dtpFrom, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_dtpTo, useCal ? SW_SHOW : SW_HIDE);
     }
 }
 
+
+static void EnsureThemeBrushes() {
+    if (!g_hBrushAppBg) g_hBrushAppBg = CreateSolidBrush(Theme::AppBg);
+    if (!g_hBrushCardBg) g_hBrushCardBg = CreateSolidBrush(Theme::CardBg);
+    if (!g_hBrushEditBg) g_hBrushEditBg = CreateSolidBrush(Theme::CardBg);
+}
+
+static void ApplyModernControlTheme(HWND hwnd) {
+    if (hwnd) {
+        SetWindowTheme(hwnd, L"Explorer", nullptr);
+    }
+}
+
+static void EnableModernOwnerDrawButton(HWND hwnd) {
+    if (!hwnd) return;
+    LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
+    SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+static void ApplyModernListBox(HWND hwnd, int itemHeight = 30) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
+}
+
+static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius);
+
+static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
+    if (!hwnd || !hdc) return;
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    const bool disabled = !IsWindowEnabled(hwnd);
+    const bool focused = GetFocus() == hwnd;
+    COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
+    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
+
+    HBRUSH clear = CreateSolidBrush(Theme::CardBg);
+    FillRect(hdc, &rc, clear);
+    DeleteObject(clear);
+
+    RECT boxRc = rc;
+    InflateRect(&boxRc, -1, -1);
+    DrawRoundedRect(hdc, boxRc, fill, border, 8);
+
+    int sel = static_cast<int>(SendMessageW(hwnd, CB_GETCURSEL, 0, 0));
+    std::wstring text;
+    if (sel != CB_ERR) {
+        int len = static_cast<int>(SendMessageW(hwnd, CB_GETLBTEXTLEN, sel, 0));
+        if (len >= 0) {
+            text.resize(static_cast<size_t>(len));
+            SendMessageW(hwnd, CB_GETLBTEXT, sel, reinterpret_cast<LPARAM>(text.data()));
+        }
+    }
+
+    RECT textRc = boxRc;
+    textRc.left += 10;
+    textRc.right -= 28;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, textColor);
+    DrawTextW(hdc, text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(hdc, oldFont);
+
+    if (!disabled) {
+        POINT pts[3]{};
+        int cx = boxRc.right - 15;
+        int cy = boxRc.top + ((boxRc.bottom - boxRc.top) / 2) + 1;
+        pts[0] = { cx - 4, cy - 2 };
+        pts[1] = { cx + 4, cy - 2 };
+        pts[2] = { cx, cy + 3 };
+        HBRUSH arrow = CreateSolidBrush(Theme::MutedText);
+        HGDIOBJ oldBrush = SelectObject(hdc, arrow);
+        HPEN pen = CreatePen(PS_SOLID, 1, Theme::MutedText);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        Polygon(hdc, pts, 3);
+        SelectObject(hdc, oldPen);
+        SelectObject(hdc, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(arrow);
+    }
+}
+
+static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        DrawModernComboBoxFace(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_PRINTCLIENT:
+        DrawModernComboBoxFace(hwnd, reinterpret_cast<HDC>(wParam));
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_ENABLE:
+    case WM_LBUTTONUP:
+        InvalidateRect(hwnd, nullptr, TRUE);
+        break;
+    case CB_SETCURSEL:
+    case CB_RESETCONTENT:
+    case CB_ADDSTRING:
+    case CB_INSERTSTRING:
+    case CB_DELETESTRING:
+    {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return result;
+    }
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, ModernComboBoxProc, 1);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static std::wstring FormatDateText(const SYSTEMTIME& st) {
+    if (st.wYear == 0) return L"";
+    wchar_t buf[32]{};
+    _snwprintf_s(buf, _TRUNCATE, L"%04u/%02u/%02u", st.wYear, st.wMonth, st.wDay);
+    return buf;
+}
+
+static SYSTEMTIME& DateForPicker(HWND hwnd) {
+    return hwnd == g_dtpTo ? g_dateTo : g_dateFrom;
+}
+
+static void UpdateModernDatePickerText(HWND hwnd) {
+    if (!hwnd) return;
+    SetWindowTextW(hwnd, FormatDateText(DateForPicker(hwnd)).c_str());
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+static bool IsLeapYear(WORD year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+static int DaysInMonth(WORD year, WORD month) {
+    static constexpr int days[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    if (month == 2) return IsLeapYear(year) ? 29 : 28;
+    if (month < 1 || month > 12) return 31;
+    return days[month - 1];
+}
+
+static int DayOfWeek(WORD year, WORD month, WORD day) {
+    SYSTEMTIME st{};
+    st.wYear = year;
+    st.wMonth = month;
+    st.wDay = day;
+    FILETIME ft{};
+    if (!SystemTimeToFileTime(&st, &ft)) return 0;
+    SYSTEMTIME back{};
+    FileTimeToSystemTime(&ft, &back);
+    return back.wDayOfWeek;
+}
+
+static void OffsetCalendarMonth(int delta) {
+    int month = static_cast<int>(g_calendarMonth.wMonth) + delta;
+    int year = static_cast<int>(g_calendarMonth.wYear);
+    while (month < 1) { month += 12; --year; }
+    while (month > 12) { month -= 12; ++year; }
+    g_calendarMonth.wYear = static_cast<WORD>(max(1601, min(9999, year)));
+    g_calendarMonth.wMonth = static_cast<WORD>(month);
+    g_calendarMonth.wDay = 1;
+}
+
+static void CloseModernCalendarPopup() {
+    if (g_calendarPopup && IsWindow(g_calendarPopup)) {
+        DestroyWindow(g_calendarPopup);
+    }
+    g_calendarPopup = nullptr;
+    g_calendarTarget = nullptr;
+}
+
+static void DrawModernDatePickerFace(HWND hwnd, HDC hdc) {
+    if (!hwnd || !hdc) return;
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    const bool disabled = !IsWindowEnabled(hwnd);
+    const bool focused = GetFocus() == hwnd;
+    COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
+    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
+
+    HBRUSH clear = CreateSolidBrush(Theme::CardBg);
+    FillRect(hdc, &rc, clear);
+    DeleteObject(clear);
+
+    RECT boxRc = rc;
+    boxRc.right = max(boxRc.left, boxRc.right - 1);
+    boxRc.bottom = max(boxRc.top, boxRc.bottom - 1);
+    DrawRoundedRect(hdc, boxRc, fill, border, 8);
+
+    wchar_t text[64]{};
+    GetWindowTextW(hwnd, text, static_cast<int>(std::size(text)));
+
+    RECT textRc = boxRc;
+    textRc.left += 10;
+    textRc.right -= 34;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, textColor);
+    DrawTextW(hdc, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(hdc, oldFont);
+
+    RECT iconRc = boxRc;
+    iconRc.left = max(iconRc.left, iconRc.right - 30);
+    iconRc.top += 6;
+    iconRc.right -= 9;
+    iconRc.bottom -= 6;
+
+    COLORREF iconColor = disabled ? Theme::DisabledText : Theme::MutedText;
+    HPEN pen = CreatePen(PS_SOLID, 1, iconColor);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    RoundRect(hdc, iconRc.left, iconRc.top + 2, iconRc.right, iconRc.bottom, 4, 4);
+    MoveToEx(hdc, iconRc.left, iconRc.top + 7, nullptr);
+    LineTo(hdc, iconRc.right, iconRc.top + 7);
+    MoveToEx(hdc, iconRc.left + 4, iconRc.top, nullptr);
+    LineTo(hdc, iconRc.left + 4, iconRc.top + 4);
+    MoveToEx(hdc, iconRc.right - 4, iconRc.top, nullptr);
+    LineTo(hdc, iconRc.right - 4, iconRc.top + 4);
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+static void ShowModernCalendarPopup(HWND target);
+
+static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        DrawModernDatePickerFace(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_PRINTCLIENT:
+        DrawModernDatePickerFace(hwnd, reinterpret_cast<HDC>(wParam));
+        return 0;
+    case WM_NCPAINT:
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_ENABLE:
+        InvalidateRect(hwnd, nullptr, TRUE);
+        break;
+    case WM_LBUTTONDOWN:
+        SetFocus(hwnd);
+        ShowModernCalendarPopup(hwnd);
+        return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_SPACE || wParam == VK_RETURN || wParam == VK_DOWN) {
+            ShowModernCalendarPopup(hwnd);
+            return 0;
+        }
+        break;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, ModernDatePickerProc, 1);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static void PaintModernCalendarPopup(HWND hwnd, HDC hdc) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    FillRect(hdc, &rc, g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+
+    RECT card = rc;
+    card.right -= 1;
+    card.bottom -= 1;
+    DrawRoundedRect(hdc, card, Theme::CardBg, Theme::Border, 14);
+
+    HFONT oldFont = reinterpret_cast<HFONT>(SelectObject(hdc, g_hFontUi ? g_hFontUi : GetStockObject(DEFAULT_GUI_FONT)));
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, Theme::Text);
+
+    RECT titleRc{ 48, 12, rc.right - 48, 42 };
+    wchar_t title[32]{};
+    _snwprintf_s(title, _TRUNCATE, L"%04u年 %02u月", g_calendarMonth.wYear, g_calendarMonth.wMonth);
+    if (g_hFontUiBold) SelectObject(hdc, g_hFontUiBold);
+    DrawTextW(hdc, title, -1, &titleRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, g_hFontUi ? g_hFontUi : GetStockObject(DEFAULT_GUI_FONT));
+
+    RECT prevRc{ 14, 12, 42, 40 };
+    RECT nextRc{ rc.right - 42, 12, rc.right - 14, 40 };
+    DrawRoundedRect(hdc, prevRc, Theme::NeutralButton, Theme::Border, 8);
+    DrawRoundedRect(hdc, nextRc, Theme::NeutralButton, Theme::Border, 8);
+    SetTextColor(hdc, Theme::MutedText);
+    DrawTextW(hdc, L"‹", -1, &prevRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, L"›", -1, &nextRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    static const wchar_t* week[] = { L"日", L"月", L"火", L"水", L"木", L"金", L"土" };
+    const int left = 14;
+    const int top = 56;
+    const int cellW = 40;
+    const int cellH = 32;
+    SetTextColor(hdc, Theme::MutedText);
+    for (int i = 0; i < 7; ++i) {
+        RECT wrc{ left + i * cellW, top, left + (i + 1) * cellW, top + 24 };
+        DrawTextW(hdc, week[i], -1, &wrc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    SYSTEMTIME selected = DateForPicker(g_calendarTarget);
+    SYSTEMTIME today{};
+    GetLocalTime(&today);
+    int firstDow = DayOfWeek(g_calendarMonth.wYear, g_calendarMonth.wMonth, 1);
+    int dim = DaysInMonth(g_calendarMonth.wYear, g_calendarMonth.wMonth);
+    int gridTop = top + 30;
+
+    HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(229, 234, 240));
+    HGDIOBJ oldGridPen = SelectObject(hdc, gridPen);
+    for (int row = 0; row <= 6; ++row) {
+        int y = gridTop + row * cellH;
+        MoveToEx(hdc, left, y, nullptr);
+        LineTo(hdc, left + cellW * 7, y);
+    }
+    for (int col = 0; col <= 7; ++col) {
+        int x = left + col * cellW;
+        MoveToEx(hdc, x, gridTop, nullptr);
+        LineTo(hdc, x, gridTop + cellH * 6);
+    }
+    SelectObject(hdc, oldGridPen);
+    DeleteObject(gridPen);
+
+    for (int day = 1; day <= dim; ++day) {
+        int pos = firstDow + day - 1;
+        int row = pos / 7;
+        int col = pos % 7;
+        RECT drc{ left + col * cellW + 3, gridTop + row * cellH + 3,
+            left + (col + 1) * cellW - 3, gridTop + (row + 1) * cellH - 3 };
+        bool isSelected = selected.wYear == g_calendarMonth.wYear && selected.wMonth == g_calendarMonth.wMonth && selected.wDay == day;
+        bool isToday = today.wYear == g_calendarMonth.wYear && today.wMonth == g_calendarMonth.wMonth && today.wDay == day;
+        if (isSelected) {
+            DrawRoundedRect(hdc, drc, Theme::Primary, Theme::PrimaryHot, 8);
+            SetTextColor(hdc, RGB(255, 255, 255));
+        }
+        else if (isToday) {
+            DrawRoundedRect(hdc, drc, RGB(239, 246, 255), RGB(147, 197, 253), 8);
+            SetTextColor(hdc, Theme::SelectedText);
+        }
+        else {
+            SetTextColor(hdc, (col == 0) ? Theme::Danger : Theme::Text);
+        }
+        wchar_t d[4]{};
+        _snwprintf_s(d, _TRUNCATE, L"%d", day);
+        DrawTextW(hdc, d, -1, &drc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    if (oldFont) SelectObject(hdc, oldFont);
+}
+
+static int HitTestModernCalendarDay(int x, int y) {
+    const int left = 14;
+    const int top = 56 + 30;
+    const int cellW = 40;
+    const int cellH = 32;
+    if (x < left || x >= left + cellW * 7 || y < top) return 0;
+    int col = (x - left) / cellW;
+    int row = (y - top) / cellH;
+    if (row < 0 || row >= 6) return 0;
+    int firstDow = DayOfWeek(g_calendarMonth.wYear, g_calendarMonth.wMonth, 1);
+    int day = row * 7 + col - firstDow + 1;
+    int dim = DaysInMonth(g_calendarMonth.wYear, g_calendarMonth.wMonth);
+    return (day >= 1 && day <= dim) ? day : 0;
+}
+
+static LRESULT CALLBACK ModernCalendarPopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintModernCalendarPopup(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_LBUTTONDOWN:
+    {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        RECT prevRc{ 14, 12, 42, 40 };
+        RECT nextRc{ rc.right - 42, 12, rc.right - 14, 40 };
+        POINT pt{ x, y };
+        if (PtInRect(&prevRc, pt)) {
+            OffsetCalendarMonth(-1);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+        if (PtInRect(&nextRc, pt)) {
+            OffsetCalendarMonth(1);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+        int day = HitTestModernCalendarDay(x, y);
+        if (day > 0 && g_calendarTarget) {
+            SYSTEMTIME& targetDate = DateForPicker(g_calendarTarget);
+            targetDate.wYear = g_calendarMonth.wYear;
+            targetDate.wMonth = g_calendarMonth.wMonth;
+            targetDate.wDay = static_cast<WORD>(day);
+            UpdateModernDatePickerText(g_calendarTarget);
+            CloseModernCalendarPopup();
+            return 0;
+        }
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            CloseModernCalendarPopup();
+            return 0;
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) == WA_INACTIVE) {
+            CloseModernCalendarPopup();
+            return 0;
+        }
+        break;
+    case WM_DESTROY:
+        if (g_calendarPopup == hwnd) g_calendarPopup = nullptr;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+static void ShowModernCalendarPopup(HWND target) {
+    if (!target) return;
+    if (g_calendarPopup && IsWindow(g_calendarPopup) && g_calendarTarget == target) {
+        CloseModernCalendarPopup();
+        return;
+    }
+    CloseModernCalendarPopup();
+    g_calendarTarget = target;
+    g_calendarMonth = DateForPicker(target);
+    if (g_calendarMonth.wYear == 0) GetLocalTime(&g_calendarMonth);
+    g_calendarMonth.wDay = 1;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = ModernCalendarPopupProc;
+        wc.hInstance = g_hInst;
+        wc.lpszClassName = L"WorkSupportModernCalendarPopup";
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        registered = true;
+    }
+
+    RECT tr{};
+    GetWindowRect(target, &tr);
+    const int w = 308;
+    const int h = 284;
+    g_calendarPopup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"WorkSupportModernCalendarPopup", L"", WS_POPUP,
+        tr.left, tr.bottom + 6, w, h, g_hwndMain, nullptr, g_hInst, nullptr);
+    if (g_calendarPopup) {
+        ShowWindow(g_calendarPopup, SW_SHOW);
+        SetFocus(g_calendarPopup);
+    }
+}
+
+static void ApplyModernComboBox(HWND hwnd, int selectionHeight = 30, int itemHeight = 30) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, selectionHeight);
+    SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, itemHeight);
+    SendMessageW(hwnd, CB_SETMINVISIBLE, 8, 0);
+    SetWindowSubclass(hwnd, ModernComboBoxProc, 1, 0);
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+static void ApplyModernResultsListView(HWND hwnd) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    ListView_SetBkColor(hwnd, Theme::CardBg);
+    ListView_SetTextBkColor(hwnd, CLR_NONE);
+    ListView_SetTextColor(hwnd, Theme::Text);
+    ListView_SetExtendedListViewStyle(hwnd,
+        LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP | LVS_EX_LABELTIP);
+    HWND header = ListView_GetHeader(hwnd);
+    if (header) {
+        ApplyModernControlTheme(header);
+        SendMessageW(header, HDM_SETBITMAPMARGIN, 8, 0);
+    }
+
+    if (!g_hResultsRowImageList) {
+        g_hResultsRowImageList = ImageList_Create(1, 34, ILC_COLOR32, 1, 1);
+        if (g_hResultsRowImageList) {
+            HBITMAP bmp = CreateBitmap(1, 34, 1, 32, nullptr);
+            ImageList_Add(g_hResultsRowImageList, bmp, nullptr);
+            DeleteObject(bmp);
+        }
+    }
+    if (g_hResultsRowImageList) {
+        ListView_SetImageList(hwnd, g_hResultsRowImageList, LVSIL_SMALL);
+    }
+}
+
+static void ApplyModernDatePickerTheme(HWND hwnd) {
+    if (!hwnd) return;
+    SetWindowSubclass(hwnd, ModernDatePickerProc, 1, 0);
+    UpdateModernDatePickerText(hwnd);
+}
+
+static bool IsPrimaryButtonId(int id) {
+    return id == IDC_BTN_SEARCH;
+}
+
+static bool IsDangerButtonId(int id) {
+    return id == IDC_BTN_STOP;
+}
+
+static bool IsCsvButtonId(int id) {
+    return id == IDC_BTN_EXPORT_CSV;
+}
+
+static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius) {
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+static bool DrawModernButton(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_BUTTON) return false;
+
+    const int id = GetDlgCtrlID(dis->hwndItem);
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    const bool hot = (dis->itemState & ODS_HOTLIGHT) != 0;
+    const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+    const bool primary = IsPrimaryButtonId(id);
+    const bool danger = IsDangerButtonId(id);
+    const bool csv = IsCsvButtonId(id);
+
+    COLORREF fill = Theme::NeutralButton;
+    COLORREF border = Theme::Border;
+    COLORREF textColor = Theme::Text;
+
+    if (disabled) {
+        fill = Theme::DisabledBg;
+        border = Theme::Border;
+        textColor = Theme::DisabledText;
+    }
+    else if (primary) {
+        fill = pressed ? Theme::PrimaryHot : Theme::Primary;
+        border = Theme::PrimaryHot;
+        textColor = RGB(255, 255, 255);
+    }
+    else if (danger) {
+        fill = pressed ? Theme::DangerHot : (hot ? RGB(254, 242, 242) : Theme::NeutralButton);
+        border = hot || pressed ? Theme::Danger : RGB(252, 165, 165);
+        textColor = pressed ? RGB(255, 255, 255) : Theme::Danger;
+    }
+    else if (csv) {
+        fill = pressed ? Theme::CsvButtonPressed : (hot ? Theme::CsvButtonHot : Theme::CsvButton);
+        border = Theme::CsvButtonBorder;
+        textColor = RGB(22, 101, 52);
+    }
+    else {
+        fill = pressed ? Theme::NeutralButtonPressed : (hot ? Theme::NeutralButtonHot : Theme::NeutralButton);
+        border = hot || focused ? RGB(147, 197, 253) : Theme::Border;
+    }
+
+    RECT rc = dis->rcItem;
+    InflateRect(&rc, -1, -1);
+    DrawRoundedRect(dis->hDC, rc, fill, border, 10);
+
+    wchar_t text[128]{};
+    GetWindowTextW(dis->hwndItem, text, (int)std::size(text));
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, textColor);
+    DrawTextW(dis->hDC, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(dis->hDC, oldFont);
+    return true;
+}
+
+static bool DrawModernListBox(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_LISTBOX) return false;
+    if (dis->itemID == static_cast<UINT>(-1)) return true;
+
+    wchar_t text[2048]{};
+    SendMessageW(dis->hwndItem, LB_GETTEXT, dis->itemID, reinterpret_cast<LPARAM>(text));
+
+    const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+    const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    RECT rc = dis->rcItem;
+
+    COLORREF bg = (dis->itemID % 2 == 0) ? Theme::CardBg : Theme::ListAltBg;
+    COLORREF fg = Theme::Text;
+    if (selected) {
+        bg = Theme::SelectedBg;
+        fg = Theme::SelectedText;
+    }
+    if (disabled || wcsncmp(text, L"[無効]", 4) == 0) {
+        fg = Theme::DisabledText;
+    }
+
+    HBRUSH brush = CreateSolidBrush(bg);
+    FillRect(dis->hDC, &rc, brush);
+    DeleteObject(brush);
+
+    RECT textRc = rc;
+    textRc.left += 12;
+    textRc.right -= 10;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, fg);
+    DrawTextW(dis->hDC, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(dis->hDC, oldFont);
+
+    if (focused) {
+        HPEN pen = CreatePen(PS_SOLID, 1, Theme::Primary);
+        HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+        HGDIOBJ oldBrush = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
+        RECT focusRc = rc;
+        InflateRect(&focusRc, -2, -2);
+        RoundRect(dis->hDC, focusRc.left, focusRc.top, focusRc.right, focusRc.bottom, 8, 8);
+        SelectObject(dis->hDC, oldBrush);
+        SelectObject(dis->hDC, oldPen);
+        DeleteObject(pen);
+    }
+    return true;
+}
+
+static LRESULT HandleResultsHeaderCustomDraw(LPNMCUSTOMDRAW cd) {
+    if (!cd) return CDRF_DODEFAULT;
+    switch (cd->dwDrawStage) {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT:
+    {
+        RECT rc = cd->rc;
+        HBRUSH bg = CreateSolidBrush(Theme::ListAltBg);
+        FillRect(cd->hdc, &rc, bg);
+        DeleteObject(bg);
+
+        HPEN line = CreatePen(PS_SOLID, 1, Theme::Border);
+        HGDIOBJ oldPen = SelectObject(cd->hdc, line);
+        MoveToEx(cd->hdc, rc.left, rc.bottom - 1, nullptr);
+        LineTo(cd->hdc, rc.right, rc.bottom - 1);
+        SelectObject(cd->hdc, oldPen);
+        DeleteObject(line);
+
+        wchar_t text[128]{};
+        HDITEMW item{};
+        item.mask = HDI_TEXT | HDI_FORMAT;
+        item.pszText = text;
+        item.cchTextMax = static_cast<int>(std::size(text));
+        Header_GetItem(cd->hdr.hwndFrom, static_cast<int>(cd->dwItemSpec), &item);
+
+        RECT textRc = rc;
+        textRc.left += 12;
+        textRc.right -= 12;
+        HFONT font = g_hFontUiBold ? g_hFontUiBold : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HGDIOBJ oldFont = SelectObject(cd->hdc, font);
+        SetBkMode(cd->hdc, TRANSPARENT);
+        SetTextColor(cd->hdc, Theme::MutedText);
+        UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS;
+        format |= (item.fmt & HDF_RIGHT) ? DT_RIGHT : DT_LEFT;
+        DrawTextW(cd->hdc, text, -1, &textRc, format);
+        SelectObject(cd->hdc, oldFont);
+        return CDRF_SKIPDEFAULT;
+    }
+    default:
+        return CDRF_DODEFAULT;
+    }
+}
+
+static bool DrawModernComboBox(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_COMBOBOX) return false;
+
+    RECT rc = dis->rcItem;
+    const bool editField = (dis->itemState & ODS_COMBOBOXEDIT) != 0;
+    const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+    const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0 || !IsWindowEnabled(dis->hwndItem);
+    if (editField) {
+        DrawModernComboBoxFace(dis->hwndItem, dis->hDC);
+        return true;
+    }
+
+    std::wstring text;
+    UINT itemId = dis->itemID;
+    if (itemId == static_cast<UINT>(-1)) {
+        int sel = static_cast<int>(SendMessageW(dis->hwndItem, CB_GETCURSEL, 0, 0));
+        if (sel != CB_ERR) itemId = static_cast<UINT>(sel);
+    }
+    if (itemId != static_cast<UINT>(-1)) {
+        int len = static_cast<int>(SendMessageW(dis->hwndItem, CB_GETLBTEXTLEN, itemId, 0));
+        if (len >= 0) {
+            text.resize(static_cast<size_t>(len));
+            SendMessageW(dis->hwndItem, CB_GETLBTEXT, itemId, reinterpret_cast<LPARAM>(text.data()));
+        }
+    }
+
+    COLORREF bg = Theme::CardBg;
+    COLORREF fg = disabled ? Theme::DisabledText : Theme::Text;
+    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    if (!editField) {
+        bg = (itemId != static_cast<UINT>(-1) && (itemId % 2) != 0) ? Theme::ListAltBg : Theme::CardBg;
+        if (selected) {
+            bg = Theme::SelectedBg;
+            fg = Theme::SelectedText;
+        }
+    }
+
+    if (editField) {
+        RECT fillRc = rc;
+        InflateRect(&fillRc, -1, -1);
+        DrawRoundedRect(dis->hDC, fillRc, disabled ? Theme::DisabledBg : bg, border, 8);
+    }
+    else {
+        HBRUSH brush = CreateSolidBrush(bg);
+        FillRect(dis->hDC, &rc, brush);
+        DeleteObject(brush);
+    }
+
+    RECT textRc = rc;
+    textRc.left += editField ? 10 : 12;
+    textRc.right -= editField ? 22 : 10;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, fg);
+    DrawTextW(dis->hDC, text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(dis->hDC, oldFont);
+
+    if (editField && !disabled) {
+        POINT pts[3]{};
+        int cx = rc.right - 13;
+        int cy = rc.top + ((rc.bottom - rc.top) / 2) + 1;
+        pts[0] = { cx - 4, cy - 2 };
+        pts[1] = { cx + 4, cy - 2 };
+        pts[2] = { cx, cy + 3 };
+        HBRUSH arrow = CreateSolidBrush(Theme::MutedText);
+        HGDIOBJ oldBrush = SelectObject(dis->hDC, arrow);
+        HPEN pen = CreatePen(PS_SOLID, 1, Theme::MutedText);
+        HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+        Polygon(dis->hDC, pts, 3);
+        SelectObject(dis->hDC, oldPen);
+        SelectObject(dis->hDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(arrow);
+    }
+
+    return true;
+}
+
+static LRESULT HandleResultsCustomDraw(LPNMLVCUSTOMDRAW cd) {
+    if (!cd) return CDRF_DODEFAULT;
+    switch (cd->nmcd.dwDrawStage) {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT:
+        return CDRF_NOTIFYSUBITEMDRAW;
+    case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+    {
+        const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+        const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
+        const bool odd = (cd->nmcd.dwItemSpec % 2) != 0;
+        cd->clrTextBk = selected ? Theme::SelectedBg : (hot ? RGB(239, 246, 255) : (odd ? Theme::ListAltBg : Theme::CardBg));
+        cd->clrText = selected ? Theme::SelectedText : (cd->iSubItem == 3 ? Theme::MutedText : Theme::Text);
+        if (cd->iSubItem == 1) cd->clrText = selected ? Theme::SelectedText : RGB(55, 65, 81);
+        if (cd->iSubItem == 2 && g_hFontUiBold) {
+            SelectObject(cd->nmcd.hdc, g_hFontUiBold);
+            return CDRF_NEWFONT;
+        }
+        return CDRF_DODEFAULT;
+    }
+    default:
+        return CDRF_DODEFAULT;
+    }
+}
+
+
+static bool DrawModernTab(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_TAB || dis->hwndItem != g_tabLeft) return false;
+
+    wchar_t text[64]{};
+    TCITEMW item{};
+    item.mask = TCIF_TEXT;
+    item.pszText = text;
+    item.cchTextMax = (int)std::size(text);
+    TabCtrl_GetItem(g_tabLeft, (int)dis->itemID, &item);
+
+    const bool selected = ((int)dis->itemID == TabCtrl_GetCurSel(g_tabLeft));
+    RECT rc = dis->rcItem;
+    InflateRect(&rc, -3, -2);
+    DrawRoundedRect(dis->hDC, rc, selected ? Theme::CardBg : RGB(238, 242, 247),
+        selected ? Theme::Border : RGB(229, 234, 240), 10);
+
+    if (selected) {
+        HBRUSH accent = CreateSolidBrush(Theme::Primary);
+        RECT underline{ rc.left + 14, rc.bottom - 4, rc.right - 14, rc.bottom - 2 };
+        FillRect(dis->hDC, &underline, accent);
+        DeleteObject(accent);
+    }
+
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(g_tabLeft, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, selected ? Theme::Text : Theme::MutedText);
+    DrawTextW(dis->hDC, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(dis->hDC, oldFont);
+    return true;
+}
+
+static void DrawCard(HDC hdc, const RECT& rc) {
+    HBRUSH card = CreateSolidBrush(Theme::CardBg);
+    HPEN border = CreatePen(PS_SOLID, 1, Theme::Border);
+    HGDIOBJ oldBrush = SelectObject(hdc, card);
+    HGDIOBJ oldPen = SelectObject(hdc, border);
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 12, 12);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(border);
+    DeleteObject(card);
+}
+
+static void PaintSearchBackground(HWND hwnd, HDC hdc) {
+    EnsureThemeBrushes();
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    FillRect(hdc, &rc, g_hBrushAppBg);
+
+    const int padding = 12;
+    const int statusH = 22;
+    int winW = rc.right - rc.left;
+    int winH = rc.bottom - rc.top;
+    int minRightW = 440;
+    int leftW = 560;
+    if (winW < leftW + minRightW + padding * 3) {
+        leftW = max(320, winW - (minRightW + padding * 3));
+    }
+    int w = leftW + padding * 2;
+    int rightX = w + padding;
+    RECT leftCard{ 6, 6, rightX - 8, max(80, winH - statusH - 6) };
+    RECT rightCard{ rightX - 2, 6, max(rightX + 260, winW - 6), max(80, winH - statusH - 6) };
+    DrawCard(hdc, leftCard);
+    DrawCard(hdc, rightCard);
+}
+
 static void DoLayout(HWND hwnd); // forward
+
+static bool ShowWindowIfNeeded(HWND hwnd, int cmdShow) {
+    if (!hwnd) return false;
+    bool wantVisible = (cmdShow != SW_HIDE);
+    bool isVisible = IsWindowVisible(hwnd) != FALSE;
+    if (wantVisible == isVisible) return false;
+    ShowWindow(hwnd, cmdShow);
+    return true;
+}
+
+static void SetRedrawEnabled(HWND hwnd, bool enabled) {
+    if (hwnd) SendMessageW(hwnd, WM_SETREDRAW, enabled ? TRUE : FALSE, 0);
+}
 
 // -------------------- Left tab (Search / Excludes) --------------------
 static void ApplyLeftTabVisibility() {
@@ -1818,63 +2647,64 @@ static void ApplyLeftTabVisibility() {
     int swExcl = isSearch ? SW_HIDE : SW_SHOW;
 
     // Search tab controls
-    ShowWindow(g_staticRoot, swSearch);
-    ShowWindow(g_listRoots, swSearch);
-    ShowWindow(g_btnBrowseRoot, swSearch);
-    ShowWindow(g_btnRootRemove, swSearch);
-    ShowWindow(g_btnRootUp, swSearch);
-    ShowWindow(g_btnRootDown, swSearch);
-    ShowWindow(g_btnRootToggle, swSearch);
-    ShowWindow(g_staticRootsHint, swSearch);
+    ShowWindowIfNeeded(g_staticRoot, swSearch);
+    ShowWindowIfNeeded(g_listRoots, swSearch);
+    ShowWindowIfNeeded(g_btnBrowseRoot, swSearch);
+    ShowWindowIfNeeded(g_btnRootRemove, swSearch);
+    ShowWindowIfNeeded(g_btnRootUp, swSearch);
+    ShowWindowIfNeeded(g_btnRootDown, swSearch);
+    ShowWindowIfNeeded(g_btnRootToggle, swSearch);
+    ShowWindowIfNeeded(g_staticRootsHint, swSearch);
 
-    ShowWindow(g_staticMode, swSearch);
-    ShowWindow(g_cmbMode, swSearch);
-    ShowWindow(g_staticDays, swSearch);
-    ShowWindow(g_editDays, swSearch);
-    ShowWindow(g_staticTimeBase, swSearch);
-    ShowWindow(g_cmbTimeBase, swSearch);
+    ShowWindowIfNeeded(g_staticMode, swSearch);
+    ShowWindowIfNeeded(g_cmbMode, swSearch);
+    ShowWindowIfNeeded(g_staticDays, swSearch);
+    ShowWindowIfNeeded(g_editDays, swSearch);
+    ShowWindowIfNeeded(g_staticTimeBase, swSearch);
+    ShowWindowIfNeeded(g_cmbTimeBase, swSearch);
 
-    ShowWindow(g_staticFrom, swSearch);
-    ShowWindow(g_staticTo, swSearch);
-    ShowWindow(g_dtpFrom, swSearch);
-    ShowWindow(g_dtpTo, swSearch);
-    ShowWindow(g_chkNameIncludeExt, swSearch);
+    ShowWindowIfNeeded(g_staticFrom, swSearch);
+    ShowWindowIfNeeded(g_staticTo, swSearch);
+    ShowWindowIfNeeded(g_dtpFrom, swSearch);
+    ShowWindowIfNeeded(g_dtpTo, swSearch);
+    ShowWindowIfNeeded(g_chkNameIncludeExt, swSearch);
 
     HWND hExtGrp = (g_hwndMain ? GetDlgItem(g_hwndMain, IDC_GRP_EXT) : nullptr);
-    if (hExtGrp) ShowWindow(hExtGrp, swSearch);
-    ShowWindow(g_chkXls, swSearch);
-    ShowWindow(g_chkXlsx, swSearch);
-    ShowWindow(g_chkXlsm, swSearch);
-    ShowWindow(g_chkXlsb, swSearch);
-    ShowWindow(g_chkXltx, swSearch);
-    ShowWindow(g_chkXltm, swSearch);
+    if (hExtGrp) ShowWindowIfNeeded(hExtGrp, swSearch);
+    ShowWindowIfNeeded(g_chkXls, swSearch);
+    ShowWindowIfNeeded(g_chkXlsx, swSearch);
+    ShowWindowIfNeeded(g_chkXlsm, swSearch);
+    ShowWindowIfNeeded(g_chkXlsb, swSearch);
+    ShowWindowIfNeeded(g_chkXltx, swSearch);
+    ShowWindowIfNeeded(g_chkXltm, swSearch);
 
     // Exclude tab controls
-    ShowWindow(g_frameFolderExcl, swExcl);
-    ShowWindow(g_frameNameExcl, swExcl);
+    ShowWindowIfNeeded(g_frameFolderExcl, swExcl);
+    ShowWindowIfNeeded(g_frameNameExcl, swExcl);
 
-    ShowWindow(g_staticExclFolder, swExcl);
-    ShowWindow(g_chkEnableFolderExcl, swExcl);
-    ShowWindow(g_listExcludes, swExcl);
-    ShowWindow(g_btnAddExclFolder, swExcl);
-    ShowWindow(g_btnRemoveExcl, swExcl);
-    ShowWindow(g_btnExclUp, swExcl);
-    ShowWindow(g_btnExclDown, swExcl);
-    ShowWindow(g_btnLoadExcl, swExcl);
-    ShowWindow(g_btnSaveExcl, swExcl);
-    ShowWindow(g_staticExclPattern, swExcl);
-    ShowWindow(g_editExclPattern, swExcl);
-    ShowWindow(g_btnAddPattern, swExcl);
+    ShowWindowIfNeeded(g_staticExclFolder, swExcl);
+    ShowWindowIfNeeded(g_chkEnableFolderExcl, swExcl);
+    ShowWindowIfNeeded(g_listExcludes, swExcl);
+    ShowWindowIfNeeded(g_btnAddExclFolder, swExcl);
+    ShowWindowIfNeeded(g_btnRemoveExcl, swExcl);
+    ShowWindowIfNeeded(g_btnExclUp, swExcl);
+    ShowWindowIfNeeded(g_btnExclDown, swExcl);
+    ShowWindowIfNeeded(g_btnLoadExcl, swExcl);
+    ShowWindowIfNeeded(g_btnSaveExcl, swExcl);
+    ShowWindowIfNeeded(g_staticExclPattern, swExcl);
+    ShowWindowIfNeeded(g_editExclPattern, swExcl);
+    ShowWindowIfNeeded(g_btnAddPattern, swExcl);
 
-    ShowWindow(g_staticExclName, swExcl);
-    ShowWindow(g_chkEnableNameExcl, swExcl);    ShowWindow(g_editFNamePattern, swExcl);
-    ShowWindow(g_btnAddFName, swExcl);
-    ShowWindow(g_btnRemoveFName, swExcl);
-    ShowWindow(g_btnFNameUp, swExcl);
-    ShowWindow(g_btnFNameDown, swExcl);
-    ShowWindow(g_listFName, swExcl);
-    ShowWindow(g_btnLoadFNameExcl, swExcl);
-    ShowWindow(g_btnSaveFNameExcl, swExcl);
+    ShowWindowIfNeeded(g_staticExclName, swExcl);
+    ShowWindowIfNeeded(g_chkEnableNameExcl, swExcl);
+    ShowWindowIfNeeded(g_editFNamePattern, swExcl);
+    ShowWindowIfNeeded(g_btnAddFName, swExcl);
+    ShowWindowIfNeeded(g_btnRemoveFName, swExcl);
+    ShowWindowIfNeeded(g_btnFNameUp, swExcl);
+    ShowWindowIfNeeded(g_btnFNameDown, swExcl);
+    ShowWindowIfNeeded(g_listFName, swExcl);
+    ShowWindowIfNeeded(g_btnLoadFNameExcl, swExcl);
+    ShowWindowIfNeeded(g_btnSaveFNameExcl, swExcl);
 
     // Keep enable/disable consistent when visible.
     UpdateUiEnableStates();
@@ -1882,12 +2712,24 @@ static void ApplyLeftTabVisibility() {
 
 static void SetLeftTab(int tab, bool saveIni = true) {
     tab = max(0, min(1, tab));
+    if (tab == g_leftTab && (!g_tabLeft || TabCtrl_GetCurSel(g_tabLeft) == g_leftTab)) {
+        return;
+    }
+
     g_leftTab = tab;
+    HWND redrawRoot = g_hwndMain;
+    SetRedrawEnabled(redrawRoot, false);
+
     if (g_tabLeft) TabCtrl_SetCurSel(g_tabLeft, g_leftTab);
     ApplyLeftTabVisibility();
     if (g_hwndMain) {
         DoLayout(g_hwndMain);
-        InvalidateRect(g_hwndMain, nullptr, TRUE);
+    }
+
+    SetRedrawEnabled(redrawRoot, true);
+    if (redrawRoot) {
+        RedrawWindow(redrawRoot, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     }
     if (saveIni) {
         IniWriteInt(L"View", L"LeftTab", g_leftTab);
@@ -1930,10 +2772,6 @@ static void LoadSettings() {
     }
 
     SetRootEntriesToListBox(entries);
-
-    SyncLegacyRootEditFromList();
-    auto enabledRoots = GetEnabledRootsFromListBox();
-    if (!enabledRoots.empty()) SetWindowTextWStr(g_editRoot, enabledRoots[0]);
 
     g_lastExcludeFile = IniReadStr(L"Main", L"ExcludeFile", g_lastExcludeFile.empty() ? (GetExeDir() + L"\\exclude.txt") : g_lastExcludeFile);
     g_lastCsvFile = IniReadStr(L"Main", L"CsvFile", g_lastCsvFile.empty() ? (GetExeDir() + L"\\results.csv") : g_lastCsvFile);
@@ -2075,7 +2913,6 @@ static void SetSearchingUi(bool searching) {
     EnableWindow(g_btnRootUp, !searching);
     EnableWindow(g_btnRootDown, !searching);
     EnableWindow(g_btnRootToggle, !searching);
-    EnableWindow(g_editRoot, !searching);
     EnableWindow(g_cmbMode, !searching);
     EnableWindow(g_editDays, !searching);
     EnableWindow(g_cmbTimeBase, !searching);
@@ -2492,7 +3329,7 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, CMD_ROOT_ADD, L"フォルダ追加...");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_ROOT_REMOVE, L"削除");
+    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_ROOT_REMOVE, L"選択削除");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel > 0) ? 0 : MF_GRAYED), CMD_ROOT_UP, L"上へ");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel + 1 < n) ? 0 : MF_GRAYED), CMD_ROOT_DOWN, L"下へ");
 
@@ -2504,7 +3341,6 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
         std::wstring p;
         if (PickFolder(hwnd, p)) {
             AddRootToListBoxDedup(p);
-            SyncLegacyRootEditFromList();
             SaveSettings();
         }
         return;
@@ -2513,14 +3349,12 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
 
     if (cmd == CMD_ROOT_REMOVE) {
         SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)sel, 0);
-        SyncLegacyRootEditFromList();
         SaveSettings();
     }
     else if (cmd == CMD_ROOT_UP || cmd == CMD_ROOT_DOWN) {
         int tgt = (cmd == CMD_ROOT_UP) ? (sel - 1) : (sel + 1);
         if (tgt >= 0 && tgt < n) {
             MoveRootItem(sel, tgt);
-            SyncLegacyRootEditFromList();
             SaveSettings();
         }
     }
@@ -2534,7 +3368,7 @@ static void ShowExcludesContextMenu(HWND hwnd, POINT ptScreen) {
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, CMD_EXCL_ADD_FOLDER, L"フォルダ追加...");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_EXCL_REMOVE, L"削除");
+    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_EXCL_REMOVE, L"選択削除");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel > 0) ? 0 : MF_GRAYED), CMD_EXCL_UP, L"上へ");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel + 1 < n) ? 0 : MF_GRAYED), CMD_EXCL_DOWN, L"下へ");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -2588,7 +3422,7 @@ static void ShowFNameContextMenu(HWND hwnd, POINT ptScreen) {
 
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, CMD_FNAME_ADD, L"追加");
-    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_FNAME_REMOVE, L"削除");
+    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_FNAME_REMOVE, L"選択削除");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel > 0) ? 0 : MF_GRAYED), CMD_FNAME_UP, L"上へ");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel + 1 < n) ? 0 : MF_GRAYED), CMD_FNAME_DOWN, L"下へ");
@@ -2773,9 +3607,8 @@ static std::wstring GetModeTextForStatus()
     if (mode == 0) return L"今日";
     if (mode == 1) return L"過去 " + std::to_wstring(GetDaysFromEdit()) + L" 日";
 
-    SYSTEMTIME stFrom{}, stTo{};
-    DateTime_GetSystemtime(g_dtpFrom, &stFrom);
-    DateTime_GetSystemtime(g_dtpTo, &stTo);
+    SYSTEMTIME stFrom = g_dateFrom;
+    SYSTEMTIME stTo = g_dateTo;
 
     wchar_t a[32], b[32];
     _snwprintf_s(a, _TRUNCATE, L"%04u-%02u-%02u", stFrom.wYear, stFrom.wMonth, stFrom.wDay);
@@ -2808,9 +3641,6 @@ static void StartSearch() {
     TimeBase tb = GetTimeBase();
     SetListViewTimeHeader(tb);
 
-    // Sync multi-root list to legacy edit so worker thread can read it safely
-    SyncLegacyRootEditFromList();
-
     std::wstring modeText = GetModeTextForStatus();
     SetStatus(L"検索中（" + modeText + L" / " + TimeBaseText(tb) + L"）...");
 
@@ -2820,7 +3650,7 @@ static void StartSearch() {
     GetActiveDateRange(params->rangeStart, params->rangeEnd);
     params->timeBase = tb;
 
-    auto rootItems = SplitRootsText(GetWindowTextWStr(g_editRoot));
+    auto rootItems = GetEnabledRootsFromListBox();
     for (auto& s : rootItems) {
         std::error_code ec;
         fs::path r = NormalizePath(fs::path(s));
@@ -2861,37 +3691,36 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_CREATE:
     {
         g_hwndMain = hwnd;
+        EnsureThemeBrushes();
 
         // statics
-        g_staticRoot = CreateWindowW(L"STATIC", L"検索先:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticRootsHint = CreateWindowW(L"STATIC", L"（複数可）ダブルクリックまたはボタンで有効/無効を切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
-        g_staticMode = CreateWindowW(L"STATIC", L"期間:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticDays = CreateWindowW(L"STATIC", L"過去N日:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticTimeBase = CreateWindowW(L"STATIC", L"日時:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticFrom = CreateWindowW(L"STATIC", L"開始:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticTo = CreateWindowW(L"STATIC", L"終了:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticFilter = CreateWindowW(L"STATIC", L"絞り込み:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticRoot = CreateWindowW(L"STATIC", L"検索先", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticRootsHint = CreateWindowW(L"STATIC", L"複数指定できます。ダブルクリックで有効/無効を切り替えます", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
+        g_staticMode = CreateWindowW(L"STATIC", L"期間", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticDays = CreateWindowW(L"STATIC", L"過去N日", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticTimeBase = CreateWindowW(L"STATIC", L"日時", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticFrom = CreateWindowW(L"STATIC", L"開始", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticTo = CreateWindowW(L"STATIC", L"終了", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticFilter = CreateWindowW(L"STATIC", L"絞り込み", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
         g_staticExclFolder = CreateWindowW(L"STATIC", L"除外フォルダ:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticExclPattern = CreateWindowW(L"STATIC", L"フォルダ名部分一致/ワイルドカード", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticExclName = CreateWindowW(L"STATIC", L"ファイル名除外:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
         // Root controls
-        g_editRoot = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_ROOT, g_hInst, nullptr);
-        g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"追加...", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
+        g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
 
         // Roots list (intuitive multi-folder)
-        g_listRoots = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+        g_listRoots = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_ROOTS, g_hInst, nullptr);
 
-        g_btnRootRemove = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_REMOVE, g_hInst, nullptr);
+        g_btnRootRemove = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_REMOVE, g_hInst, nullptr);
         g_btnRootUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_UP, g_hInst, nullptr);
         g_btnRootDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_DOWN, g_hInst, nullptr);
-        g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効/無効", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
+        g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
 
         // Mode controls
-        g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_MODE, g_hInst, nullptr);
         SendMessageW(g_cmbMode, CB_ADDSTRING, 0, (LPARAM)L"今日");
         SendMessageW(g_cmbMode, CB_ADDSTRING, 0, (LPARAM)L"過去N日");
@@ -2902,29 +3731,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_DAYS, g_hInst, nullptr);
 
         // NEW: time base
-        g_cmbTimeBase = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        g_cmbTimeBase = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_TIMEBASE, g_hInst, nullptr);
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新日時");
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"作成日時");
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新OR作成");
 
-        g_dtpFrom = CreateWindowW(DATETIMEPICK_CLASSW, L"", WS_CHILD | WS_VISIBLE | DTS_SHORTDATEFORMAT,
+        g_dtpFrom = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_DTP_FROM, g_hInst, nullptr);
 
-        g_dtpTo = CreateWindowW(DATETIMEPICK_CLASSW, L"", WS_CHILD | WS_VISIBLE | DTS_SHORTDATEFORMAT,
+        g_dtpTo = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_DTP_TO, g_hInst, nullptr);
 
         if (!g_hFontUi) {
             g_hFontUi = CreateFontW(
                 -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
         if (!g_hFontUiBold) {
             g_hFontUiBold = CreateFontW(
                 -20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
 
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
@@ -2934,30 +3763,30 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpTo, WM_SETFONT, (WPARAM)hUiFont, TRUE);
 
-        // 表示フォーマット（好みで変更可）
-        DateTime_SetFormat(g_dtpFrom, L"yyyy/MM/dd");
-        DateTime_SetFormat(g_dtpTo, L"yyyy/MM/dd");
-
         // デフォルトは今日
         SYSTEMTIME st{};
         GetLocalTime(&st);
-        DateTime_SetSystemtime(g_dtpFrom, GDT_VALID, &st);
-        DateTime_SetSystemtime(g_dtpTo, GDT_VALID, &st);
+        g_dateFrom = st;
+        g_dateTo = st;
+        UpdateModernDatePickerText(g_dtpFrom);
+        UpdateModernDatePickerText(g_dtpTo);
 
         // Left panel tab (Search / Excludes)
         if (!g_hFontTabLeft) {
             g_hFontTabLeft = CreateFontW(
                 -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
-        g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FOCUSNEVER | TCS_OWNERDRAWFIXED,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
+        ApplyModernControlTheme(g_tabLeft);
         SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(g_hFontTabLeft ? g_hFontTabLeft : hUiFont), TRUE);
+        SendMessageW(g_tabLeft, TCM_SETITEMSIZE, 0, MAKELPARAM(132, 30));
         {
             TCITEMW ti{};
             ti.mask = TCIF_TEXT;
-            ti.pszText = const_cast<LPWSTR>(L"検索");
+            ti.pszText = const_cast<LPWSTR>(L"検索条件");
             TabCtrl_InsertItem(g_tabLeft, 0, &ti);
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
@@ -2974,11 +3803,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkEnableFolderExcl = CreateWindowW(L"BUTTON", L"フォルダ除外を有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_ENABLE_FOLDER_EXCL, g_hInst, nullptr);
 
-        g_listExcludes = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+        g_listExcludes = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_EXCLUDES, g_hInst, nullptr);
 
         g_btnAddExclFolder = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_EXCL_FOLDER, g_hInst, nullptr);
-        g_btnRemoveExcl = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_EXCL, g_hInst, nullptr);
+        g_btnRemoveExcl = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_EXCL, g_hInst, nullptr);
         g_btnExclUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXCL_UP, g_hInst, nullptr);
         g_btnExclDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXCL_DOWN, g_hInst, nullptr);
         g_btnLoadExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_EXCL, g_hInst, nullptr);
@@ -2994,11 +3823,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkNameIncludeExt = CreateWindowW(L"BUTTON", L"拡張子を含めて判定", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_NAME_INCLUDE_EXT, g_hInst, nullptr);
         g_editFNamePattern = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FNAME_PATTERN, g_hInst, nullptr);
         g_btnAddFName = CreateWindowW(L"BUTTON", L"追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FNAME, g_hInst, nullptr);
-        g_btnRemoveFName = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FNAME, g_hInst, nullptr);
+        g_btnRemoveFName = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FNAME, g_hInst, nullptr);
         g_oldFNameEditProc = (WNDPROC)SetWindowLongPtrW(g_editFNamePattern, GWLP_WNDPROC, (LONG_PTR)FNameEditProc);
         g_btnFNameUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_UP, g_hInst, nullptr);
         g_btnFNameDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_DOWN, g_hInst, nullptr);
-        g_listFName = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FNAME, g_hInst, nullptr);
+        g_listFName = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FNAME, g_hInst, nullptr);
 
         g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
         g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
@@ -3014,16 +3843,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkXltm = CreateWindowW(L"BUTTON", L".xltm", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_XLTM, g_hInst, nullptr);
 
         // Actions
-        g_btnSearch = CreateWindowW(L"BUTTON", L"検索", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
+        g_btnSearch = CreateWindowW(L"BUTTON", L"検索を開始", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
         g_btnStop = CreateWindowW(L"BUTTON", L"停止", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_STOP, g_hInst, nullptr);
-        g_btnExportCsv = CreateWindowW(L"BUTTON", L"CSV出力...", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT_CSV, g_hInst, nullptr);
+        g_btnExportCsv = CreateWindowW(L"BUTTON", L"CSV出力", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT_CSV, g_hInst, nullptr);
 
         // 初期は空(0%)表示。検索中だけ Marquee を有効化する
         g_progress = CreateWindowW(PROGRESS_CLASSW, nullptr,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
             0, 0, 0, 0, hwnd, (HMENU)IDC_PROGRESS, g_hInst, nullptr);
-        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)RGB(238, 242, 247));
-        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)RGB(0, 120, 215));
+        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)Theme::ProgressBg);
+        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)Theme::Primary);
         Progress_SetMarquee(g_progress, false);
         g_staticProgress = CreateWindowW(L"STATIC", L"待機中", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
             0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PROGRESS, g_hInst, nullptr);
@@ -3035,7 +3864,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 
         // Results
-        g_listResults = CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_RESULTS, g_hInst, nullptr);
+        g_listResults = CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_RESULTS, g_hInst, nullptr);
         InitListViewColumns(g_listResults);
 
         // Status
@@ -3044,7 +3873,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HWND controls[] = {
             g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticFrom, g_staticTo, g_staticFilter,
             g_staticExclFolder, g_staticExclPattern, g_staticExclName,
-            g_editRoot, g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
+            g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
             g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo,
             g_frameFolderExcl, g_frameNameExcl,
             g_chkEnableFolderExcl, g_listExcludes, g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
@@ -3054,9 +3883,31 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_staticProgress, g_editFilter, g_listResults, g_status
         };
         for (HWND h : controls) {
-            if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+            if (h) {
+                ApplyModernControlTheme(h);
+                SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+            }
         }
+        ApplyModernDatePickerTheme(g_dtpFrom);
+        ApplyModernDatePickerTheme(g_dtpTo);
+        ApplyModernListBox(g_listRoots);
+        ApplyModernListBox(g_listExcludes);
+        ApplyModernListBox(g_listFName);
+        ApplyModernComboBox(g_cmbMode);
+        ApplyModernComboBox(g_cmbTimeBase);
+        ApplyModernResultsListView(g_listResults);
+
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
+
+        HWND modernButtons[] = {
+            g_btnBrowseRoot, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
+            g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
+            g_btnAddPattern, g_btnAddFName, g_btnRemoveFName, g_btnFNameUp, g_btnFNameDown,
+            g_btnLoadFNameExcl, g_btnSaveFNameExcl, g_btnSearch, g_btnStop, g_btnExportCsv
+        };
+        for (HWND h : modernButtons) {
+            EnableModernOwnerDrawButton(h);
+        }
 
         // Paths: settings.ini / exclude.txt / results.csv are stored under LocalAppData to avoid server permission issues
         InitPaths();
@@ -3064,9 +3915,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         // Load settings
         LoadSettings();
-
-        // legacy single-root edit (not used in multi-root UI)
-        ShowWindow(g_editRoot, SW_HIDE);
 
         EnableWindow(g_btnStop, FALSE);
         EnableWindow(g_btnExportCsv, FALSE);
@@ -3100,6 +3948,55 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         break;
     }
 
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintSearchBackground(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_ERASEBKGND:
+    {
+        PaintSearchBackground(hwnd, reinterpret_cast<HDC>(wParam));
+        return 1;
+    }
+
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        HWND ctrl = reinterpret_cast<HWND>(lParam);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, ctrl == g_staticRootsHint ? Theme::MutedText : Theme::Text);
+        return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    }
+
+    case WM_CTLCOLORBTN:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, Theme::Text);
+        return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    }
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetBkColor(hdc, Theme::CardBg);
+        SetTextColor(hdc, Theme::Text);
+        return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    }
+
+    case WM_DRAWITEM:
+    {
+        auto* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (DrawModernTab(dis) || DrawModernButton(dis) || DrawModernListBox(dis) || DrawModernComboBox(dis)) return TRUE;
+        break;
+    }
+
     case WM_COMMAND:
     {
         int id = LOWORD(wParam);
@@ -3119,7 +4016,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             std::wstring p;
             if (PickFolder(hwnd, p)) {
                 AddRootToListBoxDedup(p);
-                SyncLegacyRootEditFromList();
                 SaveSettings();
             }
             return 0;
@@ -3136,7 +4032,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int sel = (int)SendMessageW(g_listRoots, LB_GETCURSEL, 0, 0);
             if (sel != LB_ERR) {
                 SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)sel, 0);
-                SyncLegacyRootEditFromList();
                 SaveSettings();
             }
             return 0;
@@ -3155,7 +4050,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int tgt = (id == IDC_BTN_ROOT_UP) ? (sel - 1) : (sel + 1);
             if (tgt < 0 || tgt >= n) return 0;
             MoveRootItem(sel, tgt);
-            SyncLegacyRootEditFromList();
             SaveSettings();
             return 0;
         }
@@ -3351,6 +4245,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
 
+        if ((id == IDC_DTP_FROM || id == IDC_DTP_TO) && code == STN_CLICKED) {
+            ShowModernCalendarPopup(reinterpret_cast<HWND>(lParam));
+            return 0;
+        }
+
         if (id == IDC_BTN_SEARCH) { StartSearch(); return 0; }
         if (id == IDC_BTN_STOP) { StopSearch();  return 0; }
 
@@ -3362,6 +4261,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         LPNMHDR hdr = (LPNMHDR)lParam;
         if (!hdr) break;
 
+        if (g_listResults && hdr->hwndFrom == ListView_GetHeader(g_listResults) && hdr->code == NM_CUSTOMDRAW) {
+            return HandleResultsHeaderCustomDraw(reinterpret_cast<LPNMCUSTOMDRAW>(lParam));
+        }
+
         if (hdr->hwndFrom == g_tabLeft) {
             if (hdr->code == TCN_SELCHANGE) {
                 int sel = TabCtrl_GetCurSel(g_tabLeft);
@@ -3371,6 +4274,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (hdr->hwndFrom == g_listResults) {
+            if (hdr->code == NM_CUSTOMDRAW) {
+                return HandleResultsCustomDraw(reinterpret_cast<LPNMLVCUSTOMDRAW>(lParam));
+            }
             if (hdr->hwndFrom == g_listResults) {
                 if (hdr->code == NM_DBLCLK) {
                     int sel = ListView_GetNextItem(g_listResults, -1, LVNI_SELECTED);
@@ -3478,8 +4384,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         SortResults(g_sortCol, g_sortAsc);
 
-        std::wstring s = L"完了：条件一致 " + std::to_wstring((int)g_results.size()) + L" 件";
+        std::wstring s = L"完了: " + std::to_wstring((int)g_results.size()) + L" 件見つかりました";
         if (g_stopRequested) s += L"（途中停止）";
+        if (g_staticProgress) SetWindowTextW(g_staticProgress, s.c_str());
         SetStatus(s);
 
         EnableWindow(g_btnExportCsv, !g_results.empty());
@@ -3496,10 +4403,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_DESTROY:
+        CloseModernCalendarPopup();
         SaveSettings();
         if (g_hFontUi) { DeleteObject(g_hFontUi); g_hFontUi = nullptr; }
         if (g_hFontUiBold) { DeleteObject(g_hFontUiBold); g_hFontUiBold = nullptr; }
         if (g_hFontTabLeft) { DeleteObject(g_hFontTabLeft); g_hFontTabLeft = nullptr; }
+        if (g_hBrushAppBg) { DeleteObject(g_hBrushAppBg); g_hBrushAppBg = nullptr; }
+        if (g_hBrushCardBg) { DeleteObject(g_hBrushCardBg); g_hBrushCardBg = nullptr; }
+        if (g_hBrushEditBg) { DeleteObject(g_hBrushEditBg); g_hBrushEditBg = nullptr; }
+        if (g_hResultsRowImageList) { ImageList_Destroy(g_hResultsRowImageList); g_hResultsRowImageList = nullptr; }
         if (GetParent(hwnd) == nullptr) {
             PostQuitMessage(0);
         }
@@ -3542,7 +4454,7 @@ bool RegisterSearchToolPageClass(HINSTANCE hInstance) {
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = CreateSolidBrush(Theme::AppBg);
 
     if (!RegisterClassW(&wc)) {
         DWORD err = GetLastError();
