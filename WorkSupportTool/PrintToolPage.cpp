@@ -1472,7 +1472,11 @@ namespace {
 
         // 対象ブック一覧
         D(g_listFiles, x, y, w, 150);
-        y += 150 + gap;
+        y += 120 + gap;
+
+        // 現在の削除対象
+        D(g_staticRemoveTarget, x, y, w, targetH);
+        y += targetH + gap;
 
         // ファイル操作ボタン
         int btnX = x;
@@ -1483,11 +1487,7 @@ namespace {
         btnX += smallBtnW + gap;
 
         D(g_btnClearFiles, btnX, y, smallBtnW, rowH);
-        y += rowH + 6;
-
-        // 現在の削除対象
-        D(g_staticRemoveTarget, x, y, w, targetH);
-        y += targetH + gap;
+        y += rowH + 30;
 
         // 印刷シート名
         D(g_staticSheets, x, y + 5, labelW, 22);
@@ -1495,15 +1495,14 @@ namespace {
         D(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH);
         y += 56;
 
-        D(g_staticSheetsHint, x + labelW, y, w - labelW, 20);
-        y += 24;
+        D(g_staticSheetsHint, x + labelW, y, w - labelW, 24);
+        //y += 24;
 
         // 部数/プレビュー/印刷
         D(g_staticCopies, x, y + 5, labelW, 22);
         D(g_editCopies, x + labelW, y, copiesW, rowH);
-        D(g_chkPreview, x + labelW + copiesW + gap, y + 4, 140, 24);
         D(g_btnPrint, x + w - btnW, y - 2, btnW, rowH + 4);
-        y += rowH + gap;
+        y += rowH + 18;
 
         // ログ
         D(g_log, x, y + 5, labelW, 22);
