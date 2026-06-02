@@ -370,6 +370,7 @@ static fs::path NormalizePath(const fs::path& p);
 static void RefreshFileNameListBox();
 static void RebuildFileNameExcludeCache();
 static void SaveSettings();
+static bool ShowWindowIfNeeded(HWND hwnd, int cmdShow);
 // -------------------------------------------------------
 
 // ---- Roots list helpers (intuitive multi-folder) ----
@@ -1731,10 +1732,10 @@ static void UpdateUiEnableStates() {
         // 除外タブでは、検索期間系は非表示/無効（誤って復活表示しないようにする）
         EnableWindow(g_editDays, FALSE);
         EnableWindow(g_staticDays, FALSE);
-        ShowWindow(g_staticFrom, SW_HIDE);
-        ShowWindow(g_staticTo, SW_HIDE);
-        ShowWindow(g_dtpFrom, SW_HIDE);
-        ShowWindow(g_dtpTo, SW_HIDE);
+        ShowWindowIfNeeded(g_staticFrom, SW_HIDE);
+        ShowWindowIfNeeded(g_staticTo, SW_HIDE);
+        ShowWindowIfNeeded(g_dtpFrom, SW_HIDE);
+        ShowWindowIfNeeded(g_dtpTo, SW_HIDE);
     }
     else {
         EnableWindow(g_editDays, useDays);
@@ -1742,10 +1743,10 @@ static void UpdateUiEnableStates() {
 
         EnableWindow(g_dtpFrom, useCal);
         EnableWindow(g_dtpTo, useCal);
-        ShowWindow(g_staticFrom, useCal ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_staticTo, useCal ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_dtpFrom, useCal ? SW_SHOW : SW_HIDE);
-        ShowWindow(g_dtpTo, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_staticFrom, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_staticTo, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_dtpFrom, useCal ? SW_SHOW : SW_HIDE);
+        ShowWindowIfNeeded(g_dtpTo, useCal ? SW_SHOW : SW_HIDE);
     }
 }
 
@@ -2626,6 +2627,19 @@ static void PaintSearchBackground(HWND hwnd, HDC hdc) {
 
 static void DoLayout(HWND hwnd); // forward
 
+static bool ShowWindowIfNeeded(HWND hwnd, int cmdShow) {
+    if (!hwnd) return false;
+    bool wantVisible = (cmdShow != SW_HIDE);
+    bool isVisible = IsWindowVisible(hwnd) != FALSE;
+    if (wantVisible == isVisible) return false;
+    ShowWindow(hwnd, cmdShow);
+    return true;
+}
+
+static void SetRedrawEnabled(HWND hwnd, bool enabled) {
+    if (hwnd) SendMessageW(hwnd, WM_SETREDRAW, enabled ? TRUE : FALSE, 0);
+}
+
 // -------------------- Left tab (Search / Excludes) --------------------
 static void ApplyLeftTabVisibility() {
     bool isSearch = (g_leftTab == 0);
@@ -2633,63 +2647,64 @@ static void ApplyLeftTabVisibility() {
     int swExcl = isSearch ? SW_HIDE : SW_SHOW;
 
     // Search tab controls
-    ShowWindow(g_staticRoot, swSearch);
-    ShowWindow(g_listRoots, swSearch);
-    ShowWindow(g_btnBrowseRoot, swSearch);
-    ShowWindow(g_btnRootRemove, swSearch);
-    ShowWindow(g_btnRootUp, swSearch);
-    ShowWindow(g_btnRootDown, swSearch);
-    ShowWindow(g_btnRootToggle, swSearch);
-    ShowWindow(g_staticRootsHint, swSearch);
+    ShowWindowIfNeeded(g_staticRoot, swSearch);
+    ShowWindowIfNeeded(g_listRoots, swSearch);
+    ShowWindowIfNeeded(g_btnBrowseRoot, swSearch);
+    ShowWindowIfNeeded(g_btnRootRemove, swSearch);
+    ShowWindowIfNeeded(g_btnRootUp, swSearch);
+    ShowWindowIfNeeded(g_btnRootDown, swSearch);
+    ShowWindowIfNeeded(g_btnRootToggle, swSearch);
+    ShowWindowIfNeeded(g_staticRootsHint, swSearch);
 
-    ShowWindow(g_staticMode, swSearch);
-    ShowWindow(g_cmbMode, swSearch);
-    ShowWindow(g_staticDays, swSearch);
-    ShowWindow(g_editDays, swSearch);
-    ShowWindow(g_staticTimeBase, swSearch);
-    ShowWindow(g_cmbTimeBase, swSearch);
+    ShowWindowIfNeeded(g_staticMode, swSearch);
+    ShowWindowIfNeeded(g_cmbMode, swSearch);
+    ShowWindowIfNeeded(g_staticDays, swSearch);
+    ShowWindowIfNeeded(g_editDays, swSearch);
+    ShowWindowIfNeeded(g_staticTimeBase, swSearch);
+    ShowWindowIfNeeded(g_cmbTimeBase, swSearch);
 
-    ShowWindow(g_staticFrom, swSearch);
-    ShowWindow(g_staticTo, swSearch);
-    ShowWindow(g_dtpFrom, swSearch);
-    ShowWindow(g_dtpTo, swSearch);
-    ShowWindow(g_chkNameIncludeExt, swSearch);
+    ShowWindowIfNeeded(g_staticFrom, swSearch);
+    ShowWindowIfNeeded(g_staticTo, swSearch);
+    ShowWindowIfNeeded(g_dtpFrom, swSearch);
+    ShowWindowIfNeeded(g_dtpTo, swSearch);
+    ShowWindowIfNeeded(g_chkNameIncludeExt, swSearch);
 
     HWND hExtGrp = (g_hwndMain ? GetDlgItem(g_hwndMain, IDC_GRP_EXT) : nullptr);
-    if (hExtGrp) ShowWindow(hExtGrp, swSearch);
-    ShowWindow(g_chkXls, swSearch);
-    ShowWindow(g_chkXlsx, swSearch);
-    ShowWindow(g_chkXlsm, swSearch);
-    ShowWindow(g_chkXlsb, swSearch);
-    ShowWindow(g_chkXltx, swSearch);
-    ShowWindow(g_chkXltm, swSearch);
+    if (hExtGrp) ShowWindowIfNeeded(hExtGrp, swSearch);
+    ShowWindowIfNeeded(g_chkXls, swSearch);
+    ShowWindowIfNeeded(g_chkXlsx, swSearch);
+    ShowWindowIfNeeded(g_chkXlsm, swSearch);
+    ShowWindowIfNeeded(g_chkXlsb, swSearch);
+    ShowWindowIfNeeded(g_chkXltx, swSearch);
+    ShowWindowIfNeeded(g_chkXltm, swSearch);
 
     // Exclude tab controls
-    ShowWindow(g_frameFolderExcl, swExcl);
-    ShowWindow(g_frameNameExcl, swExcl);
+    ShowWindowIfNeeded(g_frameFolderExcl, swExcl);
+    ShowWindowIfNeeded(g_frameNameExcl, swExcl);
 
-    ShowWindow(g_staticExclFolder, swExcl);
-    ShowWindow(g_chkEnableFolderExcl, swExcl);
-    ShowWindow(g_listExcludes, swExcl);
-    ShowWindow(g_btnAddExclFolder, swExcl);
-    ShowWindow(g_btnRemoveExcl, swExcl);
-    ShowWindow(g_btnExclUp, swExcl);
-    ShowWindow(g_btnExclDown, swExcl);
-    ShowWindow(g_btnLoadExcl, swExcl);
-    ShowWindow(g_btnSaveExcl, swExcl);
-    ShowWindow(g_staticExclPattern, swExcl);
-    ShowWindow(g_editExclPattern, swExcl);
-    ShowWindow(g_btnAddPattern, swExcl);
+    ShowWindowIfNeeded(g_staticExclFolder, swExcl);
+    ShowWindowIfNeeded(g_chkEnableFolderExcl, swExcl);
+    ShowWindowIfNeeded(g_listExcludes, swExcl);
+    ShowWindowIfNeeded(g_btnAddExclFolder, swExcl);
+    ShowWindowIfNeeded(g_btnRemoveExcl, swExcl);
+    ShowWindowIfNeeded(g_btnExclUp, swExcl);
+    ShowWindowIfNeeded(g_btnExclDown, swExcl);
+    ShowWindowIfNeeded(g_btnLoadExcl, swExcl);
+    ShowWindowIfNeeded(g_btnSaveExcl, swExcl);
+    ShowWindowIfNeeded(g_staticExclPattern, swExcl);
+    ShowWindowIfNeeded(g_editExclPattern, swExcl);
+    ShowWindowIfNeeded(g_btnAddPattern, swExcl);
 
-    ShowWindow(g_staticExclName, swExcl);
-    ShowWindow(g_chkEnableNameExcl, swExcl);    ShowWindow(g_editFNamePattern, swExcl);
-    ShowWindow(g_btnAddFName, swExcl);
-    ShowWindow(g_btnRemoveFName, swExcl);
-    ShowWindow(g_btnFNameUp, swExcl);
-    ShowWindow(g_btnFNameDown, swExcl);
-    ShowWindow(g_listFName, swExcl);
-    ShowWindow(g_btnLoadFNameExcl, swExcl);
-    ShowWindow(g_btnSaveFNameExcl, swExcl);
+    ShowWindowIfNeeded(g_staticExclName, swExcl);
+    ShowWindowIfNeeded(g_chkEnableNameExcl, swExcl);
+    ShowWindowIfNeeded(g_editFNamePattern, swExcl);
+    ShowWindowIfNeeded(g_btnAddFName, swExcl);
+    ShowWindowIfNeeded(g_btnRemoveFName, swExcl);
+    ShowWindowIfNeeded(g_btnFNameUp, swExcl);
+    ShowWindowIfNeeded(g_btnFNameDown, swExcl);
+    ShowWindowIfNeeded(g_listFName, swExcl);
+    ShowWindowIfNeeded(g_btnLoadFNameExcl, swExcl);
+    ShowWindowIfNeeded(g_btnSaveFNameExcl, swExcl);
 
     // Keep enable/disable consistent when visible.
     UpdateUiEnableStates();
@@ -2697,12 +2712,24 @@ static void ApplyLeftTabVisibility() {
 
 static void SetLeftTab(int tab, bool saveIni = true) {
     tab = max(0, min(1, tab));
+    if (tab == g_leftTab && (!g_tabLeft || TabCtrl_GetCurSel(g_tabLeft) == g_leftTab)) {
+        return;
+    }
+
     g_leftTab = tab;
+    HWND redrawRoot = g_hwndMain;
+    SetRedrawEnabled(redrawRoot, false);
+
     if (g_tabLeft) TabCtrl_SetCurSel(g_tabLeft, g_leftTab);
     ApplyLeftTabVisibility();
     if (g_hwndMain) {
         DoLayout(g_hwndMain);
-        InvalidateRect(g_hwndMain, nullptr, TRUE);
+    }
+
+    SetRedrawEnabled(redrawRoot, true);
+    if (redrawRoot) {
+        RedrawWindow(redrawRoot, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     }
     if (saveIni) {
         IniWriteInt(L"View", L"LeftTab", g_leftTab);
