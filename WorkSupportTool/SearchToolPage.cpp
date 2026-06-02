@@ -1970,6 +1970,96 @@ static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+static void DrawModernDatePickerFace(HWND hwnd, HDC hdc) {
+    if (!hwnd || !hdc) return;
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    const bool disabled = !IsWindowEnabled(hwnd);
+    const bool focused = GetFocus() == hwnd;
+    COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
+    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
+
+    HBRUSH clear = CreateSolidBrush(Theme::CardBg);
+    FillRect(hdc, &rc, clear);
+    DeleteObject(clear);
+
+    RECT boxRc = rc;
+    InflateRect(&boxRc, -1, -1);
+    DrawRoundedRect(hdc, boxRc, fill, border, 8);
+
+    wchar_t text[64]{};
+    GetWindowTextW(hwnd, text, static_cast<int>(std::size(text)));
+
+    RECT textRc = boxRc;
+    textRc.left += 10;
+    textRc.right -= 34;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, textColor);
+    DrawTextW(hdc, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(hdc, oldFont);
+
+    RECT iconRc = boxRc;
+    iconRc.left = max(iconRc.left, iconRc.right - 30);
+    iconRc.top += 6;
+    iconRc.right -= 9;
+    iconRc.bottom -= 6;
+
+    COLORREF iconColor = disabled ? Theme::DisabledText : Theme::MutedText;
+    HPEN pen = CreatePen(PS_SOLID, 1, iconColor);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    RoundRect(hdc, iconRc.left, iconRc.top + 2, iconRc.right, iconRc.bottom, 4, 4);
+    MoveToEx(hdc, iconRc.left, iconRc.top + 7, nullptr);
+    LineTo(hdc, iconRc.right, iconRc.top + 7);
+    MoveToEx(hdc, iconRc.left + 4, iconRc.top, nullptr);
+    LineTo(hdc, iconRc.left + 4, iconRc.top + 4);
+    MoveToEx(hdc, iconRc.right - 4, iconRc.top, nullptr);
+    LineTo(hdc, iconRc.right - 4, iconRc.top + 4);
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        DrawModernDatePickerFace(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_PRINTCLIENT:
+        DrawModernDatePickerFace(hwnd, reinterpret_cast<HDC>(wParam));
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_ENABLE:
+    case WM_LBUTTONUP:
+        InvalidateRect(hwnd, nullptr, TRUE);
+        break;
+    case DTM_SETSYSTEMTIME:
+    case DTM_SETFORMATW:
+    {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return result;
+    }
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, ModernDatePickerProc, 1);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
 static void ApplyModernComboBox(HWND hwnd, int selectionHeight = 30, int itemHeight = 30) {
     if (!hwnd) return;
     ApplyModernControlTheme(hwnd);
@@ -2010,6 +2100,8 @@ static void ApplyModernResultsListView(HWND hwnd) {
 static void ApplyModernDatePickerTheme(HWND hwnd) {
     if (!hwnd) return;
     ApplyModernControlTheme(hwnd);
+    SetWindowSubclass(hwnd, ModernDatePickerProc, 1, 0);
+    InvalidateRect(hwnd, nullptr, TRUE);
     SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_BACKGROUND, Theme::AppBg);
     SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_MONTHBK, Theme::CardBg);
     SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TEXT, Theme::Text);
@@ -3995,6 +4087,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         if (g_listResults && hdr->hwndFrom == ListView_GetHeader(g_listResults) && hdr->code == NM_CUSTOMDRAW) {
             return HandleResultsHeaderCustomDraw(reinterpret_cast<LPNMCUSTOMDRAW>(lParam));
+        }
+
+        if ((hdr->hwndFrom == g_dtpFrom || hdr->hwndFrom == g_dtpTo) && hdr->code == DTN_DATETIMECHANGE) {
+            InvalidateRect(hdr->hwndFrom, nullptr, TRUE);
+            return 0;
         }
 
         if (hdr->hwndFrom == g_tabLeft) {
