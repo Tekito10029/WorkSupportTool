@@ -23,13 +23,15 @@ HWND g_hwndSearchPage = nullptr;
 HWND g_hwndPrintPage = nullptr;
 int g_currentTab = 0;
 HFONT g_hFontTab = nullptr;
+HBRUSH g_hBrushMainBg = nullptr;
+constexpr COLORREF kColorAppBg = RGB(245, 247, 250);
 
 RECT GetPageRect(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
-    const int padding = 10;
-    const int tabH = 34;
+    const int padding = 14;
+    const int tabH = 38;
 
     RECT page{
         padding,
@@ -44,8 +46,8 @@ void LayoutMain(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
-    const int padding = 10;
-    const int tabH = 30;
+    const int padding = 14;
+    const int tabH = 34;
 
     MoveWindow(g_tabMain, padding, padding, max(300, rc.right - padding * 2), tabH, TRUE);
 
@@ -68,12 +70,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_CREATE:
     {
         g_hwndMain = hwnd;
+        if (!g_hBrushMainBg) {
+            g_hBrushMainBg = CreateSolidBrush(kColorAppBg);
+        }
 
         if (!g_hFontTab) {
             g_hFontTab = CreateFontW(
                 -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
         HFONT hFont = g_hFontTab ? g_hFontTab : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
@@ -109,6 +114,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
+    case WM_ERASEBKGND:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_hBrushMainBg ? g_hBrushMainBg : reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
+        return 1;
+    }
+
     case WM_SIZE:
         LayoutMain(hwnd);
         return 0;
@@ -127,6 +141,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_DESTROY:
         if (g_hFontTab) { DeleteObject(g_hFontTab); g_hFontTab = nullptr; }
+        if (g_hBrushMainBg) { DeleteObject(g_hBrushMainBg); g_hBrushMainBg = nullptr; }
         PostQuitMessage(0);
         return 0;
     }
@@ -155,7 +170,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     wc.hInstance = hInstance;
     wc.lpszClassName = L"ExcelFinderTabbedMainWin";
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = CreateSolidBrush(kColorAppBg);
     RegisterClassW(&wc);
 
     HWND hwnd = CreateWindowW(

@@ -31,6 +31,18 @@
 
 namespace {
 
+
+    namespace Theme {
+        constexpr COLORREF AppBg = RGB(245, 247, 250);
+        constexpr COLORREF CardBg = RGB(255, 255, 255);
+        constexpr COLORREF Border = RGB(221, 227, 234);
+        constexpr COLORREF Text = RGB(31, 41, 55);
+        constexpr COLORREF MutedText = RGB(107, 114, 128);
+        constexpr COLORREF Primary = RGB(37, 99, 235);
+        constexpr COLORREF PrimaryHot = RGB(29, 78, 216);
+        constexpr COLORREF Disabled = RGB(156, 163, 175);
+    }
+
     enum : int {
         IDC_STATIC_FILES = 5001,
         IDC_LIST_FILES,
@@ -98,12 +110,86 @@ namespace {
 
     HFONT g_hFontUi = nullptr;
     HFONT g_hFontUiBold = nullptr;
+    HBRUSH g_hBrushAppBg = nullptr;
+    HBRUSH g_hBrushCardBg = nullptr;
+    HBRUSH g_hBrushEditBg = nullptr;
 
     std::vector<std::wstring> g_files;
     std::vector<PrinterInfo> g_printers;
     std::wstring g_selectedPrinter;
     HGLOBAL g_hDevMode = nullptr;
     HGLOBAL g_hDevNames = nullptr;
+
+
+    static void EnsureThemeBrushes() {
+        if (!g_hBrushAppBg) g_hBrushAppBg = CreateSolidBrush(Theme::AppBg);
+        if (!g_hBrushCardBg) g_hBrushCardBg = CreateSolidBrush(Theme::CardBg);
+        if (!g_hBrushEditBg) g_hBrushEditBg = CreateSolidBrush(Theme::CardBg);
+    }
+
+    static void DrawCard(HDC hdc, const RECT& rc) {
+        HBRUSH card = CreateSolidBrush(Theme::CardBg);
+        HPEN border = CreatePen(PS_SOLID, 1, Theme::Border);
+        HGDIOBJ oldBrush = SelectObject(hdc, card);
+        HGDIOBJ oldPen = SelectObject(hdc, border);
+        RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 12, 12);
+        SelectObject(hdc, oldPen);
+        SelectObject(hdc, oldBrush);
+        DeleteObject(border);
+        DeleteObject(card);
+    }
+
+    static void PaintPageBackground(HWND hwnd, HDC hdc) {
+        EnsureThemeBrushes();
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, g_hBrushAppBg);
+
+        const int margin = 10;
+        const int gap = 10;
+        const int fullW = max(240, rc.right - margin * 2);
+        RECT filesCard{ margin, margin, margin + fullW, 265 };
+        RECT sheetsCard{ margin, filesCard.bottom + gap, margin + fullW, filesCard.bottom + 116 };
+        RECT logCard{ margin, sheetsCard.bottom + gap, margin + fullW, max(sheetsCard.bottom + 110, rc.bottom - margin) };
+        DrawCard(hdc, filesCard);
+        DrawCard(hdc, sheetsCard);
+        DrawCard(hdc, logCard);
+    }
+
+    static bool DrawOwnerButton(const DRAWITEMSTRUCT* dis) {
+        if (!dis || dis->CtlType != ODT_BUTTON) return false;
+        bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+        bool selected = (dis->itemState & ODS_SELECTED) != 0;
+        bool focused = (dis->itemState & ODS_FOCUS) != 0;
+        COLORREF fill = disabled ? Theme::Disabled : (selected ? Theme::PrimaryHot : Theme::Primary);
+        COLORREF borderColor = disabled ? Theme::Disabled : Theme::PrimaryHot;
+
+        HBRUSH brush = CreateSolidBrush(fill);
+        HPEN pen = CreatePen(PS_SOLID, 1, borderColor);
+        HGDIOBJ oldBrush = SelectObject(dis->hDC, brush);
+        HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+        RECT r = dis->rcItem;
+        RoundRect(dis->hDC, r.left, r.top, r.right, r.bottom, 10, 10);
+        SelectObject(dis->hDC, oldPen);
+        SelectObject(dis->hDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+
+        wchar_t text[128]{};
+        GetWindowTextW(dis->hwndItem, text, 128);
+        HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+        HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+        SetBkMode(dis->hDC, TRANSPARENT);
+        SetTextColor(dis->hDC, RGB(255, 255, 255));
+        DrawTextW(dis->hDC, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (oldFont) SelectObject(dis->hDC, oldFont);
+        if (focused) {
+            RECT fr = r;
+            InflateRect(&fr, -4, -4);
+            DrawFocusRect(dis->hDC, &fr);
+        }
+        return true;
+    }
 
     static std::wstring GetDefaultPrinterName()
     {
@@ -997,7 +1083,7 @@ namespace {
         auto finishPrint = []() {
             g_isPrinting = false;
             if (g_btnPrint) {
-                SetWindowTextW(g_btnPrint, L"▶ 印刷を実行");
+                SetWindowTextW(g_btnPrint, L"3. 印刷を実行");
                 EnableWindow(g_btnPrint, TRUE);
             }
             };
@@ -1076,7 +1162,7 @@ namespace {
         RECT rc{};
         GetClientRect(hwnd, &rc);
 
-        const int margin = 16;
+        const int margin = 26;
         const int gap = 10;
         const int rowH = 34;
         const int labelW = 110;
@@ -1094,8 +1180,8 @@ namespace {
 
         int y = margin;
 
-        D(g_staticFiles, x, y, w, 20);
-        y += 20 + 6;
+        D(g_staticFiles, x, y, w, 22);
+        y += 22 + 8;
 
         // 対象ブック一覧
         D(g_listFiles, x, y, w, 150);
@@ -1149,38 +1235,39 @@ namespace {
         case WM_CREATE:
         {
             g_hwndPage = hwnd;
+            EnsureThemeBrushes();
 
             if (!g_hFontUi) {
                 g_hFontUi = CreateFontW(
                     -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                    DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+                    DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
             }
             if (!g_hFontUiBold) {
                 g_hFontUiBold = CreateFontW(
                     -20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                    DEFAULT_PITCH | FF_DONTCARE, L"Meiryo UI");
+                    DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
             }
 
             HFONT hFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
             HFONT hFontBold = g_hFontUiBold ? g_hFontUiBold : hFont;
 
-            g_staticFiles = CreateWindowW(L"STATIC", L"対象ブック",
+            g_staticFiles = CreateWindowW(L"STATIC", L"1. 印刷するブック",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
             g_listFiles = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FILES, g_hInst, nullptr);
-            g_btnAddFiles = CreateWindowW(L"BUTTON", L"ファイル追加...",
+            g_btnAddFiles = CreateWindowW(L"BUTTON", L"ファイル追加",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FILES, g_hInst, nullptr);
-            g_btnRemoveFile = CreateWindowW(L"BUTTON", L"項目削除",
+            g_btnRemoveFile = CreateWindowW(L"BUTTON", L"選択ブック削除",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FILE, g_hInst, nullptr);
             g_btnClearFiles = CreateWindowW(L"BUTTON", L"一覧クリア",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CLEAR_FILES, g_hInst, nullptr);
             g_staticRemoveTarget = CreateWindowW(L"STATIC", L"対象: なし",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_REMOVE_TARGET, g_hInst, nullptr);
 
-            g_staticSheets = CreateWindowW(L"STATIC", L"印刷シート名",
+            g_staticSheets = CreateWindowW(L"STATIC", L"2. 印刷シート名",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_SHEETS, g_hInst, nullptr);
             g_editSheets = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                 WS_CHILD | WS_VISIBLE | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
@@ -1212,10 +1299,10 @@ namespace {
                 WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PAPER, g_hInst, nullptr);
 
-            g_btnPrint = CreateWindowW(L"BUTTON", L"▶ 印刷を実行",
-                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
+            g_btnPrint = CreateWindowW(L"BUTTON", L"3. 印刷を実行",
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | BS_OWNERDRAW, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
 
-            g_log = CreateWindowW(L"STATIC", L"ログ",
+            g_log = CreateWindowW(L"STATIC", L"4. 実行ログ",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
             g_editLog = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
                 L"ブック内に存在するシートのみ印刷します。\r\n"
@@ -1251,6 +1338,50 @@ namespace {
             UpdateRemoveTargetLabel();
             return 0;
         }
+
+
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps{};
+            HDC hdc = BeginPaint(hwnd, &ps);
+            PaintPageBackground(hwnd, hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_ERASEBKGND:
+            PaintPageBackground(hwnd, reinterpret_cast<HDC>(wParam));
+            return 1;
+
+        case WM_CTLCOLORSTATIC:
+        {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            HWND ctrl = reinterpret_cast<HWND>(lParam);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, ctrl == g_staticSheetsHint || ctrl == g_staticRemoveTarget ? Theme::MutedText : Theme::Text);
+            return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        }
+
+        case WM_CTLCOLORBTN:
+        {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, Theme::Text);
+            return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        }
+
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+        {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkColor(hdc, Theme::CardBg);
+            SetTextColor(hdc, Theme::Text);
+            return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        }
+
+        case WM_DRAWITEM:
+            if (DrawOwnerButton(reinterpret_cast<DRAWITEMSTRUCT*>(lParam))) return TRUE;
+            break;
 
         case WM_SIZE:
             LayoutPage(hwnd);
@@ -1346,6 +1477,9 @@ namespace {
                 DeleteObject(g_hFontUiBold);
                 g_hFontUiBold = nullptr;
             }
+            if (g_hBrushAppBg) { DeleteObject(g_hBrushAppBg); g_hBrushAppBg = nullptr; }
+            if (g_hBrushCardBg) { DeleteObject(g_hBrushCardBg); g_hBrushCardBg = nullptr; }
+            if (g_hBrushEditBg) { DeleteObject(g_hBrushEditBg); g_hBrushEditBg = nullptr; }
             return 0;
         }
 
@@ -1372,7 +1506,7 @@ bool RegisterPrintToolPageClass(HINSTANCE hInstance) {
     wc.hInstance = hInstance;
     wc.lpszClassName = L"PrintToolPageWindow";
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = CreateSolidBrush(Theme::AppBg);
 
     return RegisterClassW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
