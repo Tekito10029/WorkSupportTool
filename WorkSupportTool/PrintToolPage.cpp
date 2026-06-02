@@ -158,12 +158,113 @@ namespace {
         SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
     }
 
+    static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius);
+
+    static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
+        if (!hwnd || !hdc) return;
+
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const bool disabled = !IsWindowEnabled(hwnd);
+        const bool focused = GetFocus() == hwnd;
+        COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
+        COLORREF border = focused ? Theme::Primary : Theme::Border;
+        COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
+
+        HBRUSH clear = CreateSolidBrush(Theme::CardBg);
+        FillRect(hdc, &rc, clear);
+        DeleteObject(clear);
+
+        RECT boxRc = rc;
+        InflateRect(&boxRc, -1, -1);
+        DrawRoundedRect(hdc, boxRc, fill, border, 8);
+
+        int sel = static_cast<int>(SendMessageW(hwnd, CB_GETCURSEL, 0, 0));
+        std::wstring text;
+        if (sel != CB_ERR) {
+            int len = static_cast<int>(SendMessageW(hwnd, CB_GETLBTEXTLEN, sel, 0));
+            if (len >= 0) {
+                text.resize(static_cast<size_t>(len));
+                SendMessageW(hwnd, CB_GETLBTEXT, sel, reinterpret_cast<LPARAM>(text.data()));
+            }
+        }
+
+        RECT textRc = boxRc;
+        textRc.left += 10;
+        textRc.right -= 28;
+        HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+        HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, textColor);
+        DrawTextW(hdc, text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (oldFont) SelectObject(hdc, oldFont);
+
+        if (!disabled) {
+            POINT pts[3]{};
+            int cx = boxRc.right - 15;
+            int cy = boxRc.top + ((boxRc.bottom - boxRc.top) / 2) + 1;
+            pts[0] = { cx - 4, cy - 2 };
+            pts[1] = { cx + 4, cy - 2 };
+            pts[2] = { cx, cy + 3 };
+            HBRUSH arrow = CreateSolidBrush(Theme::MutedText);
+            HGDIOBJ oldBrush = SelectObject(hdc, arrow);
+            HPEN pen = CreatePen(PS_SOLID, 1, Theme::MutedText);
+            HGDIOBJ oldPen = SelectObject(hdc, pen);
+            Polygon(hdc, pts, 3);
+            SelectObject(hdc, oldPen);
+            SelectObject(hdc, oldBrush);
+            DeleteObject(pen);
+            DeleteObject(arrow);
+        }
+    }
+
+    static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+        UINT_PTR, DWORD_PTR) {
+        switch (msg) {
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps{};
+            HDC hdc = BeginPaint(hwnd, &ps);
+            DrawModernComboBoxFace(hwnd, hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_PRINTCLIENT:
+            DrawModernComboBoxFace(hwnd, reinterpret_cast<HDC>(wParam));
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_SETFOCUS:
+        case WM_KILLFOCUS:
+        case WM_ENABLE:
+        case WM_LBUTTONUP:
+            InvalidateRect(hwnd, nullptr, TRUE);
+            break;
+        case CB_SETCURSEL:
+        case CB_RESETCONTENT:
+        case CB_ADDSTRING:
+        case CB_INSERTSTRING:
+        case CB_DELETESTRING:
+        {
+            LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return result;
+        }
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, ModernComboBoxProc, 1);
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+
     static void ApplyModernComboBox(HWND hwnd, int selectionHeight = 30, int itemHeight = 30) {
         if (!hwnd) return;
         ApplyModernControlTheme(hwnd);
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, selectionHeight);
         SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, itemHeight);
         SendMessageW(hwnd, CB_SETMINVISIBLE, 8, 0);
+        SetWindowSubclass(hwnd, ModernComboBoxProc, 1, 0);
+        InvalidateRect(hwnd, nullptr, TRUE);
     }
 
     static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius) {
@@ -288,6 +389,10 @@ namespace {
         const bool selected = (dis->itemState & ODS_SELECTED) != 0;
         const bool focused = (dis->itemState & ODS_FOCUS) != 0;
         const bool disabled = (dis->itemState & ODS_DISABLED) != 0 || !IsWindowEnabled(dis->hwndItem);
+        if (editField) {
+            DrawModernComboBoxFace(dis->hwndItem, dis->hDC);
+            return true;
+        }
 
         std::wstring text;
         UINT itemId = dis->itemID;
