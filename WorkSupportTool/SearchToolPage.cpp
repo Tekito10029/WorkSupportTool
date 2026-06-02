@@ -15,6 +15,7 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <shlwapi.h>
+#include <uxtheme.h>
 
 #include <filesystem>
 #include <string>
@@ -30,8 +31,21 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace fs = std::filesystem;
+
+
+namespace Theme {
+constexpr COLORREF AppBg = RGB(245, 247, 250);
+constexpr COLORREF CardBg = RGB(255, 255, 255);
+constexpr COLORREF Border = RGB(221, 227, 234);
+constexpr COLORREF Text = RGB(31, 41, 55);
+constexpr COLORREF MutedText = RGB(107, 114, 128);
+constexpr COLORREF Primary = RGB(37, 99, 235);
+constexpr COLORREF ProgressBg = RGB(229, 231, 235);
+}
+
 
 // -------------------- IDs --------------------
 enum : int {
@@ -189,6 +203,9 @@ static HWND g_hwndMain = nullptr;
 static HFONT g_hFontUi = nullptr;
 static HFONT g_hFontUiBold = nullptr;
 static HFONT g_hFontTabLeft = nullptr;
+static HBRUSH g_hBrushAppBg = nullptr;
+static HBRUSH g_hBrushCardBg = nullptr;
+static HBRUSH g_hBrushEditBg = nullptr;
 
 static HWND g_tabLeft = nullptr;
 static int  g_leftTab = 0; // 0: 検索, 1: 除外
@@ -1429,7 +1446,7 @@ static bool ExportResultsCsv(const std::wstring& filePath, TimeBase tb) {
 
 // -------------------- ListView --------------------
 static void InitListViewColumns(HWND lv) {
-    ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+    ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP);
 
     LVCOLUMNW col{};
     col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
@@ -1807,6 +1824,54 @@ static void UpdateUiEnableStates() {
         ShowWindow(g_dtpFrom, useCal ? SW_SHOW : SW_HIDE);
         ShowWindow(g_dtpTo, useCal ? SW_SHOW : SW_HIDE);
     }
+}
+
+
+static void EnsureThemeBrushes() {
+    if (!g_hBrushAppBg) g_hBrushAppBg = CreateSolidBrush(Theme::AppBg);
+    if (!g_hBrushCardBg) g_hBrushCardBg = CreateSolidBrush(Theme::CardBg);
+    if (!g_hBrushEditBg) g_hBrushEditBg = CreateSolidBrush(Theme::CardBg);
+}
+
+static void ApplyModernControlTheme(HWND hwnd) {
+    if (hwnd) {
+        SetWindowTheme(hwnd, L"Explorer", nullptr);
+    }
+}
+
+static void DrawCard(HDC hdc, const RECT& rc) {
+    HBRUSH card = CreateSolidBrush(Theme::CardBg);
+    HPEN border = CreatePen(PS_SOLID, 1, Theme::Border);
+    HGDIOBJ oldBrush = SelectObject(hdc, card);
+    HGDIOBJ oldPen = SelectObject(hdc, border);
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 12, 12);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(border);
+    DeleteObject(card);
+}
+
+static void PaintSearchBackground(HWND hwnd, HDC hdc) {
+    EnsureThemeBrushes();
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    FillRect(hdc, &rc, g_hBrushAppBg);
+
+    const int padding = 12;
+    const int statusH = 22;
+    int winW = rc.right - rc.left;
+    int winH = rc.bottom - rc.top;
+    int minRightW = 440;
+    int leftW = 560;
+    if (winW < leftW + minRightW + padding * 3) {
+        leftW = max(320, winW - (minRightW + padding * 3));
+    }
+    int w = leftW + padding * 2;
+    int rightX = w + padding;
+    RECT leftCard{ 6, 6, rightX - 8, max(80, winH - statusH - 6) };
+    RECT rightCard{ rightX - 2, 6, max(rightX + 260, winW - 6), max(80, winH - statusH - 6) };
+    DrawCard(hdc, leftCard);
+    DrawCard(hdc, rightCard);
 }
 
 static void DoLayout(HWND hwnd); // forward
@@ -2492,7 +2557,7 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, CMD_ROOT_ADD, L"フォルダ追加...");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_ROOT_REMOVE, L"削除");
+    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_ROOT_REMOVE, L"選択削除");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel > 0) ? 0 : MF_GRAYED), CMD_ROOT_UP, L"上へ");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel + 1 < n) ? 0 : MF_GRAYED), CMD_ROOT_DOWN, L"下へ");
 
@@ -2534,7 +2599,7 @@ static void ShowExcludesContextMenu(HWND hwnd, POINT ptScreen) {
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, CMD_EXCL_ADD_FOLDER, L"フォルダ追加...");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_EXCL_REMOVE, L"削除");
+    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_EXCL_REMOVE, L"選択削除");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel > 0) ? 0 : MF_GRAYED), CMD_EXCL_UP, L"上へ");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel + 1 < n) ? 0 : MF_GRAYED), CMD_EXCL_DOWN, L"下へ");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -2588,7 +2653,7 @@ static void ShowFNameContextMenu(HWND hwnd, POINT ptScreen) {
 
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, CMD_FNAME_ADD, L"追加");
-    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_FNAME_REMOVE, L"削除");
+    AppendMenuW(hMenu, MF_STRING | (hasSel ? 0 : MF_GRAYED), CMD_FNAME_REMOVE, L"選択削除");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel > 0) ? 0 : MF_GRAYED), CMD_FNAME_UP, L"上へ");
     AppendMenuW(hMenu, MF_STRING | ((hasSel && sel + 1 < n) ? 0 : MF_GRAYED), CMD_FNAME_DOWN, L"下へ");
@@ -2861,16 +2926,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_CREATE:
     {
         g_hwndMain = hwnd;
+        EnsureThemeBrushes();
 
         // statics
-        g_staticRoot = CreateWindowW(L"STATIC", L"検索先:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticRootsHint = CreateWindowW(L"STATIC", L"（複数可）ダブルクリックまたはボタンで有効/無効を切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
-        g_staticMode = CreateWindowW(L"STATIC", L"期間:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticDays = CreateWindowW(L"STATIC", L"過去N日:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticTimeBase = CreateWindowW(L"STATIC", L"日時:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticFrom = CreateWindowW(L"STATIC", L"開始:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticTo = CreateWindowW(L"STATIC", L"終了:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
-        g_staticFilter = CreateWindowW(L"STATIC", L"絞り込み:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticRoot = CreateWindowW(L"STATIC", L"検索先", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticRootsHint = CreateWindowW(L"STATIC", L"複数指定できます。ダブルクリックで有効/無効を切り替えます", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
+        g_staticMode = CreateWindowW(L"STATIC", L"期間", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticDays = CreateWindowW(L"STATIC", L"過去N日", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticTimeBase = CreateWindowW(L"STATIC", L"日時", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticFrom = CreateWindowW(L"STATIC", L"開始", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticTo = CreateWindowW(L"STATIC", L"終了", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticFilter = CreateWindowW(L"STATIC", L"絞り込み", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
         g_staticExclFolder = CreateWindowW(L"STATIC", L"除外フォルダ:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticExclPattern = CreateWindowW(L"STATIC", L"フォルダ名部分一致/ワイルドカード", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
@@ -2879,16 +2945,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // Root controls
         g_editRoot = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_ROOT, g_hInst, nullptr);
-        g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"追加...", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
+        g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
 
         // Roots list (intuitive multi-folder)
         g_listRoots = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_ROOTS, g_hInst, nullptr);
 
-        g_btnRootRemove = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_REMOVE, g_hInst, nullptr);
+        g_btnRootRemove = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_REMOVE, g_hInst, nullptr);
         g_btnRootUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_UP, g_hInst, nullptr);
         g_btnRootDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_DOWN, g_hInst, nullptr);
-        g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効/無効", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
+        g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
 
         // Mode controls
         g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
@@ -2918,13 +2984,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_hFontUi = CreateFontW(
                 -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
         if (!g_hFontUiBold) {
             g_hFontUiBold = CreateFontW(
                 -20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
 
         HFONT hUiFont = g_hFontUi ? g_hFontUi : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
@@ -2949,15 +3015,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_hFontTabLeft = CreateFontW(
                 -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
-        g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FOCUSNEVER,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
+        ApplyModernControlTheme(g_tabLeft);
         SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(g_hFontTabLeft ? g_hFontTabLeft : hUiFont), TRUE);
         {
             TCITEMW ti{};
             ti.mask = TCIF_TEXT;
-            ti.pszText = const_cast<LPWSTR>(L"検索");
+            ti.pszText = const_cast<LPWSTR>(L"検索条件");
             TabCtrl_InsertItem(g_tabLeft, 0, &ti);
             ti.pszText = const_cast<LPWSTR>(L"除外");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
@@ -2978,11 +3045,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_EXCLUDES, g_hInst, nullptr);
 
         g_btnAddExclFolder = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_EXCL_FOLDER, g_hInst, nullptr);
-        g_btnRemoveExcl = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_EXCL, g_hInst, nullptr);
+        g_btnRemoveExcl = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_EXCL, g_hInst, nullptr);
         g_btnExclUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXCL_UP, g_hInst, nullptr);
         g_btnExclDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXCL_DOWN, g_hInst, nullptr);
-        g_btnLoadExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_EXCL, g_hInst, nullptr);
-        g_btnSaveExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_EXCL, g_hInst, nullptr);
+        g_btnLoadExcl = CreateWindowW(L"BUTTON", L"設定読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_EXCL, g_hInst, nullptr);
+        g_btnSaveExcl = CreateWindowW(L"BUTTON", L"設定保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_EXCL, g_hInst, nullptr);
 
         g_editExclPattern = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_EXCL_PATTERN, g_hInst, nullptr);
         g_btnAddPattern = CreateWindowW(L"BUTTON", L"追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_PATTERN, g_hInst, nullptr);
@@ -2994,14 +3061,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkNameIncludeExt = CreateWindowW(L"BUTTON", L"拡張子を含めて判定", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_NAME_INCLUDE_EXT, g_hInst, nullptr);
         g_editFNamePattern = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FNAME_PATTERN, g_hInst, nullptr);
         g_btnAddFName = CreateWindowW(L"BUTTON", L"追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FNAME, g_hInst, nullptr);
-        g_btnRemoveFName = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FNAME, g_hInst, nullptr);
+        g_btnRemoveFName = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FNAME, g_hInst, nullptr);
         g_oldFNameEditProc = (WNDPROC)SetWindowLongPtrW(g_editFNamePattern, GWLP_WNDPROC, (LONG_PTR)FNameEditProc);
         g_btnFNameUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_UP, g_hInst, nullptr);
         g_btnFNameDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_DOWN, g_hInst, nullptr);
         g_listFName = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FNAME, g_hInst, nullptr);
 
-        g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
-        g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
+        g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"設定読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
+        g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"設定保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
 
         // Extensions group
         CreateWindowW(L"BUTTON", L"対象拡張子", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_GRP_EXT, g_hInst, nullptr);
@@ -3014,16 +3081,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkXltm = CreateWindowW(L"BUTTON", L".xltm", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_XLTM, g_hInst, nullptr);
 
         // Actions
-        g_btnSearch = CreateWindowW(L"BUTTON", L"検索", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
-        g_btnStop = CreateWindowW(L"BUTTON", L"停止", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_STOP, g_hInst, nullptr);
-        g_btnExportCsv = CreateWindowW(L"BUTTON", L"CSV出力...", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT_CSV, g_hInst, nullptr);
+        g_btnSearch = CreateWindowW(L"BUTTON", L"検索を開始", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
+        g_btnStop = CreateWindowW(L"BUTTON", L"検索を停止", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_STOP, g_hInst, nullptr);
+        g_btnExportCsv = CreateWindowW(L"BUTTON", L"結果をCSV出力", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT_CSV, g_hInst, nullptr);
 
         // 初期は空(0%)表示。検索中だけ Marquee を有効化する
         g_progress = CreateWindowW(PROGRESS_CLASSW, nullptr,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
             0, 0, 0, 0, hwnd, (HMENU)IDC_PROGRESS, g_hInst, nullptr);
-        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)RGB(238, 242, 247));
-        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)RGB(0, 120, 215));
+        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)Theme::ProgressBg);
+        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)Theme::Primary);
         Progress_SetMarquee(g_progress, false);
         g_staticProgress = CreateWindowW(L"STATIC", L"待機中", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
             0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PROGRESS, g_hInst, nullptr);
@@ -3054,7 +3121,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_staticProgress, g_editFilter, g_listResults, g_status
         };
         for (HWND h : controls) {
-            if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+            if (h) {
+                ApplyModernControlTheme(h);
+                SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+            }
         }
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
@@ -3098,6 +3168,48 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (src == g_listExcludes) { ShowExcludesContextMenu(hwnd, pt); return 0; }
         if (src == g_listFName) { ShowFNameContextMenu(hwnd, pt); return 0; }
         break;
+    }
+
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintSearchBackground(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_ERASEBKGND:
+    {
+        PaintSearchBackground(hwnd, reinterpret_cast<HDC>(wParam));
+        return 1;
+    }
+
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        HWND ctrl = reinterpret_cast<HWND>(lParam);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, ctrl == g_staticRootsHint ? Theme::MutedText : Theme::Text);
+        return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    }
+
+    case WM_CTLCOLORBTN:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, Theme::Text);
+        return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    }
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetBkColor(hdc, Theme::CardBg);
+        SetTextColor(hdc, Theme::Text);
+        return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
     }
 
     case WM_COMMAND:
@@ -3478,8 +3590,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         SortResults(g_sortCol, g_sortAsc);
 
-        std::wstring s = L"完了：条件一致 " + std::to_wstring((int)g_results.size()) + L" 件";
+        std::wstring s = L"完了: " + std::to_wstring((int)g_results.size()) + L" 件見つかりました";
         if (g_stopRequested) s += L"（途中停止）";
+        if (g_staticProgress) SetWindowTextW(g_staticProgress, s.c_str());
         SetStatus(s);
 
         EnableWindow(g_btnExportCsv, !g_results.empty());
@@ -3500,6 +3613,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (g_hFontUi) { DeleteObject(g_hFontUi); g_hFontUi = nullptr; }
         if (g_hFontUiBold) { DeleteObject(g_hFontUiBold); g_hFontUiBold = nullptr; }
         if (g_hFontTabLeft) { DeleteObject(g_hFontTabLeft); g_hFontTabLeft = nullptr; }
+        if (g_hBrushAppBg) { DeleteObject(g_hBrushAppBg); g_hBrushAppBg = nullptr; }
+        if (g_hBrushCardBg) { DeleteObject(g_hBrushCardBg); g_hBrushCardBg = nullptr; }
+        if (g_hBrushEditBg) { DeleteObject(g_hBrushEditBg); g_hBrushEditBg = nullptr; }
         if (GetParent(hwnd) == nullptr) {
             PostQuitMessage(0);
         }
@@ -3542,7 +3658,7 @@ bool RegisterSearchToolPageClass(HINSTANCE hInstance) {
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = CreateSolidBrush(Theme::AppBg);
 
     if (!RegisterClassW(&wc)) {
         DWORD err = GetLastError();
