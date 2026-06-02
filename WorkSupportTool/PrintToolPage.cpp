@@ -539,6 +539,7 @@ namespace {
     }
 
     void RefreshFileList() {
+        // 内部の印刷対象リストをリストボックスへ反映し、追加・削除後の表示を最新化する
         if (!g_listFiles) return;
         SendMessageW(g_listFiles, LB_RESETCONTENT, 0, 0);
         for (const auto& f : g_files) {
@@ -595,6 +596,7 @@ namespace {
     }
 
     std::vector<std::wstring> SplitSheetNames(const std::wstring& s) {
+        // シート名は改行・カンマ・セミコロン・読点区切りを許容し、空要素は除外する
         std::vector<std::wstring> out;
         std::wstring cur;
         auto flush = [&]() {
@@ -887,6 +889,7 @@ namespace {
     }
 
     void RefreshPrinterCombo() {
+        // Windowsに登録されているローカル/接続プリンタを列挙し、選択中プリンタを維持する
         ComboBox_ResetContent(g_cmbPrinter);
         g_printers.clear();
 
@@ -1025,6 +1028,7 @@ namespace {
 
     bool ShowRuntimePrintDialog(int& outCopies)
     {
+        // 印刷直前に標準ダイアログを表示し、プリンタ・部数・用紙などの最終設定を取得する
         PRINTDLGW pd{};
         pd.lStructSize = sizeof(pd);
         pd.hwndOwner = g_hwndPage;
@@ -1085,6 +1089,7 @@ namespace {
     }
 
     void SaveSheetSettings() {
+        // 次回起動時に復元できるよう、シート名・部数・プレビュー・プリンタ設定をINIへ保存する
         const std::wstring ini = GetIniPath();
         wchar_t sheets[4096]{};
         GetWindowTextW(g_editSheets, sheets, 4095);
@@ -1167,6 +1172,7 @@ namespace {
     }
 
     bool PrintWorksheet(IDispatch* ws, int copies, bool preview, const std::wstring& activePrinter) {
+        // プレビュー指定時は印刷せずExcelのプレビュー画面を開き、通常時だけPrintOutを呼び出す
         if (preview) {
             return ShowWorksheetPrintPreview(ws);
         }
@@ -1204,6 +1210,7 @@ namespace {
         const std::wstring& selectedPrinter,
         short paperCode,
         std::wstring& outMessage) {
+        // 1ブックずつExcel COMで開き、指定されたシートだけを順番に印刷する
         outMessage.clear();
 
         CLSID clsid{};
@@ -1229,6 +1236,7 @@ namespace {
         };
 
         if (!selectedPrinter.empty() && _wcsicmp(oldDefaultPrinter.c_str(), selectedPrinter.c_str()) != 0) {
+            // ExcelのActivePrinter指定だけでは反映されない環境に備え、一時的に既定プリンタも合わせる
             changedDefaultPrinter = SetDefaultPrinterName(selectedPrinter);
         }
 
@@ -1264,6 +1272,7 @@ namespace {
         std::vector<std::wstring> missing;
 
         if (okWorksheets && worksheets) {
+            // ユーザー指定順にシートを探し、存在しないシートはログ用に missing へ積む
             for (const auto& target : sheetNames) {
                 IDispatch* ws = GetWorksheetByName(worksheets, target);
                 if (!ws) {
@@ -1272,6 +1281,7 @@ namespace {
                 }
 
                 if (paperCode != 0) {
+                    // ダイアログで選ばれた用紙サイズを各シートのPageSetupに反映してから印刷する
                     IDispatch* pageSetup = nullptr;
                     if (GetDispatchProperty(ws, L"PageSetup", &pageSetup)) {
                         SetLongProperty(pageSetup, L"PaperSize", paperCode);
@@ -1354,6 +1364,7 @@ namespace {
     }
 
     void DoPrint() {
+        // 二重実行を防ぎ、印刷中はボタンを無効化して状態を明示する
         if (g_isPrinting) {
             AddLog(L"印刷処理中です。完了するまでお待ちください。");
             return;
@@ -1430,6 +1441,7 @@ namespace {
         }
 
         for (const auto& file : g_files) {
+            // ブックごとに処理結果をログへ出し、長い連続印刷中もUIメッセージを処理する
             std::wstring msg;
             PrintOneBook(file, sheetNames, copies, preview, selectedPrinter, paperCode, msg);
             AddLog(msg);

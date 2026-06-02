@@ -192,6 +192,9 @@ struct Hit {
     unsigned long long sizeKB = 0;
     std::wstring fileName;
     std::wstring path;
+    // フィルターと並べ替えで毎回小文字化しないよう、検索ヒット登録時にキャッシュする
+    std::wstring fileNameLow;
+    std::wstring pathLow;
 };
 
 enum class ExcludeType { DirPrefix, Wildcard, Substring };
@@ -200,6 +203,9 @@ struct ExcludeRule {
     std::wstring raw;
     fs::path dirNorm;
     std::wstring pattern;
+    // 除外判定は探索中に大量実行されるため、小文字化済みの値を保持して再計算を避ける
+    std::wstring rawLow;
+    std::wstring dirNormLow;
 };
 
 enum class TimeBase { LastWrite = 0, Creation = 1, Either = 2 };
@@ -592,14 +598,18 @@ static fs::path NormalizePath(const fs::path& p) {
     if (ec) return abs;
     return can;
 }
-static bool IsUnderPath(const fs::path& p, const fs::path& prefix) {
-    auto pit = p.begin();
-    auto eit = prefix.begin();
-    for (; eit != prefix.end(); ++eit, ++pit) {
-        if (pit == p.end()) return false;
-        if (ToLower(pit->wstring()) != ToLower(eit->wstring())) return false;
-    }
-    return true;
+
+static bool IsPathSeparator(wchar_t c) {
+    return c == L'\\' || c == L'/';
+}
+
+static bool HasPathPrefixLow(const std::wstring& pathLow, const std::wstring& prefixLow) {
+    // 正規化済みパス同士を小文字文字列で比較し、C:\foo と C:\foobar の誤判定を防ぐ
+    if (prefixLow.empty() || pathLow.size() < prefixLow.size()) return false;
+    if (pathLow.compare(0, prefixLow.size(), prefixLow) != 0) return false;
+    if (pathLow.size() == prefixLow.size()) return true;
+    if (IsPathSeparator(prefixLow.back())) return true;
+    return IsPathSeparator(pathLow[prefixLow.size()]);
 }
 
 // ---- time ----
@@ -942,12 +952,13 @@ static void RefreshExcludeListBox() {
     }
 }
 static bool IsExcludedDir(const fs::path& dirNorm) {
-    std::wstring dirStr = dirNorm.wstring();
-    std::wstring dirLower = ToLower(dirStr);
+    const std::wstring dirStr = dirNorm.wstring();
+    const std::wstring dirLower = ToLower(dirStr);
 
     for (const auto& r : g_excludeRules) {
         if (r.type == ExcludeType::DirPrefix) {
-            if (IsUnderPath(dirNorm, r.dirNorm)) return true;
+            // パス接頭辞はキャッシュ済み小文字文字列で比較し、探索中のパス分解コストを抑える
+            if (HasPathPrefixLow(dirLower, r.dirNormLow)) return true;
         }
         else if (r.type == ExcludeType::Wildcard) {
             if (PathMatchSpecW(dirStr.c_str(), r.raw.c_str())) return true;
@@ -963,10 +974,11 @@ static void AddExcludeDirPrefix(const std::wstring& folderPath) {
     r.type = ExcludeType::DirPrefix;
     r.dirNorm = NormalizePath(fs::path(folderPath));
     r.raw = r.dirNorm.wstring();
+    r.rawLow = ToLower(r.raw);
+    r.dirNormLow = r.rawLow;
 
-    auto rawLow = ToLower(r.raw);
     for (auto& e : g_excludeRules) {
-        if (e.type == ExcludeType::DirPrefix && ToLower(e.dirNorm.wstring()) == rawLow) return;
+        if (e.type == ExcludeType::DirPrefix && e.dirNormLow == r.dirNormLow) return;
     }
     g_excludeRules.push_back(std::move(r));
     RefreshExcludeListBox();
@@ -980,16 +992,17 @@ static void AddOrUpdateExcludePatternOrSubstring(const std::wstring& text, int t
     bool hasWild = (t.find(L'*') != std::wstring::npos) || (t.find(L'?') != std::wstring::npos);
     if (hasWild) {
         r.type = ExcludeType::Wildcard;
+        r.rawLow = ToLower(r.raw);
         if (targetIndexOrMinus1 < 0) {
-            auto low = ToLower(r.raw);
             for (auto& e : g_excludeRules) {
-                if (e.type == ExcludeType::Wildcard && ToLower(e.raw) == low) return;
+                if (e.type == ExcludeType::Wildcard && e.rawLow == r.rawLow) return;
             }
         }
     }
     else {
         r.type = ExcludeType::Substring;
-        r.pattern = ToLower(t);
+        r.rawLow = ToLower(r.raw);
+        r.pattern = r.rawLow;
         if (targetIndexOrMinus1 < 0) {
             for (auto& e : g_excludeRules) {
                 if (e.type == ExcludeType::Substring && e.pattern == r.pattern) return;
@@ -1029,6 +1042,7 @@ static bool LoadExcludesFromFile(const std::wstring& filePath, const fs::path& r
             ExcludeRule r;
             r.type = ExcludeType::Wildcard;
             r.raw = line;
+            r.rawLow = ToLower(r.raw);
             loaded.push_back(std::move(r));
             continue;
         }
@@ -1041,20 +1055,24 @@ static bool LoadExcludesFromFile(const std::wstring& filePath, const fs::path& r
             r.type = ExcludeType::DirPrefix;
             r.dirNorm = NormalizePath(p);
             r.raw = r.dirNorm.wstring();
+            r.rawLow = ToLower(r.raw);
+            r.dirNormLow = r.rawLow;
             loaded.push_back(std::move(r));
         }
         else {
             ExcludeRule r;
             r.type = ExcludeType::Substring;
             r.raw = line;
-            r.pattern = ToLower(line);
+            r.rawLow = ToLower(r.raw);
+            r.pattern = r.rawLow;
             loaded.push_back(std::move(r));
         }
     }
 
     auto key = [](const ExcludeRule& r) {
-        if (r.type == ExcludeType::DirPrefix) return L"DIR:" + ToLower(r.dirNorm.wstring());
-        if (r.type == ExcludeType::Wildcard)  return L"WILD:" + ToLower(r.raw);
+        // 読み込み直後に作った小文字キャッシュを重複排除にも使う
+        if (r.type == ExcludeType::DirPrefix) return L"DIR:" + r.dirNormLow;
+        if (r.type == ExcludeType::Wildcard)  return L"WILD:" + r.rawLow;
         return L"SUB:" + r.pattern;
         };
     std::sort(loaded.begin(), loaded.end(), [&](const ExcludeRule& a, const ExcludeRule& b) { return key(a) < key(b); });
@@ -1085,11 +1103,11 @@ static void UpdateExcludeDirPrefixAt(int index, const std::wstring& newPath)
     auto norm = NormalizePath(p);
     auto low = ToLower(norm.wstring());
 
-    // de-dup against other DIR rules
+    // 他のDIR除外と重複しないか確認する
     for (int i = 0; i < (int)g_excludeRules.size(); ++i) {
         if (i == index) continue;
         const auto& r = g_excludeRules[(size_t)i];
-        if (r.type == ExcludeType::DirPrefix && ToLower(r.dirNorm.wstring()) == low) {
+        if (r.type == ExcludeType::DirPrefix && r.dirNormLow == low) {
             MessageBoxW(g_hwndMain, L"同じ除外フォルダが既に存在します。", L"更新できません", MB_OK | MB_ICONINFORMATION);
             return;
         }
@@ -1099,6 +1117,8 @@ static void UpdateExcludeDirPrefixAt(int index, const std::wstring& newPath)
     r.type = ExcludeType::DirPrefix;
     r.dirNorm = norm;
     r.raw = norm.wstring();
+    r.rawLow = low;
+    r.dirNormLow = low;
     r.pattern.clear();
     RefreshExcludeListBox();
     SendMessageW(g_listExcludes, LB_SETCURSEL, (WPARAM)index, 0);
@@ -1318,9 +1338,9 @@ static std::wstring GetFilterLow() {
 }
 static bool HitMatchesFilterLow(const Hit& h, const std::wstring& fLow) {
     if (fLow.empty()) return true;
-    std::wstring n = ToLower(h.fileName);
-    std::wstring p = ToLower(h.path);
-    return (n.find(fLow) != std::wstring::npos) || (p.find(fLow) != std::wstring::npos);
+    // ヒット作成時に保存した小文字キャッシュを使い、フィルター変更時の再描画を軽くする
+    return (h.fileNameLow.find(fLow) != std::wstring::npos) ||
+        (h.pathLow.find(fLow) != std::wstring::npos);
 }
 static void UpdateExportButtonEnabled() {
     if (!g_btnExportCsv) return;
@@ -1475,14 +1495,11 @@ static void SortResults(int col, bool asc) {
             r = (A.sizeKB < B.sizeKB) ? -1 : (A.sizeKB > B.sizeKB ? 1 : 0);
         }
         else if (col == 2) {
-            auto aL = ToLower(A.fileName);
-            auto bL = ToLower(B.fileName);
-            r = (aL < bL) ? -1 : (aL > bL ? 1 : 0);
+            // ファイル名/パスは小文字キャッシュで比較し、ソート中の一時文字列生成を減らす
+            r = (A.fileNameLow < B.fileNameLow) ? -1 : (A.fileNameLow > B.fileNameLow ? 1 : 0);
         }
         else {
-            auto aL = ToLower(A.path);
-            auto bL = ToLower(B.path);
-            r = (aL < bL) ? -1 : (aL > bL ? 1 : 0);
+            r = (A.pathLow < B.pathLow) ? -1 : (A.pathLow > B.pathLow ? 1 : 0);
         }
         return asc ? (r < 0) : (r > 0);
         };
@@ -3463,7 +3480,7 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
     std::wstring lastDir;
     int dirNotifyCountdown = 0;
 
-    // Pre-scan: count regular files for whole-progress display.
+    // 本検索の前に通常ファイル数を数え、進捗バーへ全体件数を表示できるようにする
     for (const auto& root : params->roots) {
         if (g_stopRequested) break;
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
@@ -3472,6 +3489,7 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
             if (g_stopRequested) break;
             const auto& entry = *it;
             if (entry.is_directory(ec)) {
+                // 除外フォルダーに一致した場合は再帰を止め、配下ファイルの無駄な走査を避ける
                 if (useFolderExcl) {
                     auto dirNorm = NormalizePath(entry.path());
                     if (IsExcludedDir(dirNorm)) it.disable_recursion_pending();
@@ -3492,9 +3510,9 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
 
             const auto& entry = *it;
 
-            // Notify current scanning folder (throttled)
+            // 走査中フォルダー名の通知は約200件ごとに間引き、UI更新の負荷を抑える
             if (dirNotifyCountdown-- <= 0) {
-                dirNotifyCountdown = 200; // every ~200 entries
+                dirNotifyCountdown = 200;
                 std::wstring curDir = entry.path().parent_path().wstring();
                 if (curDir != lastDir) {
                     lastDir = curDir;
@@ -3518,6 +3536,7 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
             }
 
             const auto p = entry.path();
+            // 対象拡張子とファイル名除外を先に判定し、不要な時刻取得やサイズ取得を避ける
             if (!IsTargetExcelFile(p)) continue;
 
             if (useNameExcl && IsExcludedByFileName(p)) continue;
@@ -3553,6 +3572,8 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
             hit->sizeKB = kb;
             hit->fileName = p.filename().wstring();
             hit->path = p.wstring();
+            hit->fileNameLow = ToLower(hit->fileName);
+            hit->pathLow = ToLower(hit->path);
 
             hits++;
             if (IsWindow(g_hwndMain)) {

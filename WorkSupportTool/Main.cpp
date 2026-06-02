@@ -35,12 +35,14 @@ constexpr COLORREF kColorMutedText = RGB(107, 114, 128);
 constexpr COLORREF kColorPrimary = RGB(37, 99, 235);
 
 void ApplyModernControlTheme(HWND hwnd) {
+    // 共通コントロールへ Explorer テーマを適用し、標準部品でも現代的な見た目に寄せる
     if (hwnd) {
         SetWindowTheme(hwnd, L"Explorer", nullptr);
     }
 }
 
 void FillRoundRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius) {
+    // タブ描画で使う角丸背景を塗りつぶし色と枠線色を分けて描画する
     HBRUSH brush = CreateSolidBrush(fill);
     HPEN pen = CreatePen(PS_SOLID, 1, border);
     HGDIOBJ oldBrush = SelectObject(hdc, brush);
@@ -53,6 +55,7 @@ void FillRoundRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int 
 }
 
 bool DrawModernTab(const DRAWITEMSTRUCT* dis) {
+    // オーナードローのタブを自前描画し、選択中タブには下線アクセントを付ける
     if (!dis || dis->CtlType != ODT_TAB || dis->hwndItem != g_tabMain) return false;
 
     wchar_t text[64]{};
@@ -103,6 +106,7 @@ RECT GetPageRect(HWND hwnd) {
 }
 
 void LayoutMain(HWND hwnd) {
+    // メインウィンドウのサイズ変更に合わせ、タブと各ページを同じ表示領域へ再配置する
     RECT rc{};
     GetClientRect(hwnd, &rc);
 
@@ -117,6 +121,7 @@ void LayoutMain(HWND hwnd) {
 }
 
 void ApplyMainTab() {
+    // 印刷タブへ移動する直前に検索結果のパス一覧を渡し、印刷対象を同期する
     const bool isSearch = (g_currentTab == 0);
     if (!isSearch) {
         PrintToolPage_SetFiles(SearchToolPage_GetResultPaths());
@@ -220,6 +225,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     g_hInst = hInstance;
 
+    // Excel/印刷設定ダイアログなど COM を使う処理に備え、UIスレッドをSTAで初期化する
     const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool comInitialized = SUCCEEDED(hrInit);
 
