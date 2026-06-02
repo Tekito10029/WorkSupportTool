@@ -48,6 +48,10 @@ constexpr COLORREF PrimaryHot = RGB(29, 78, 216);
 constexpr COLORREF NeutralButton = RGB(255, 255, 255);
 constexpr COLORREF NeutralButtonHot = RGB(243, 246, 251);
 constexpr COLORREF NeutralButtonPressed = RGB(232, 238, 248);
+constexpr COLORREF CsvButton = RGB(118, 255, 118);
+constexpr COLORREF CsvButtonHot = RGB(96, 235, 96);
+constexpr COLORREF CsvButtonPressed = RGB(72, 205, 72);
+constexpr COLORREF CsvButtonBorder = RGB(52, 180, 52);
 constexpr COLORREF Danger = RGB(220, 38, 38);
 constexpr COLORREF DangerHot = RGB(185, 28, 28);
 constexpr COLORREF DisabledBg = RGB(229, 231, 235);
@@ -218,6 +222,7 @@ static HFONT g_hFontTabLeft = nullptr;
 static HBRUSH g_hBrushAppBg = nullptr;
 static HBRUSH g_hBrushCardBg = nullptr;
 static HBRUSH g_hBrushEditBg = nullptr;
+static HIMAGELIST g_hResultsRowImageList = nullptr;
 
 static HWND g_tabLeft = nullptr;
 static int  g_leftTab = 0; // 0: 検索, 1: 除外
@@ -1461,22 +1466,22 @@ static void InitListViewColumns(HWND lv) {
     ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP);
 
     LVCOLUMNW col{};
-    col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+    col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM | LVCF_FMT;
 
     col.pszText = (LPWSTR)L"日時";
-    col.cx = 170; col.iSubItem = 0;
+    col.cx = 170; col.iSubItem = 0; col.fmt = LVCFMT_LEFT;
     ListView_InsertColumn(lv, 0, &col);
 
     col.pszText = (LPWSTR)L"KB";
-    col.cx = 80; col.iSubItem = 1;
+    col.cx = 80; col.iSubItem = 1; col.fmt = LVCFMT_RIGHT;
     ListView_InsertColumn(lv, 1, &col);
 
     col.pszText = (LPWSTR)L"ファイル名";
-    col.cx = 240; col.iSubItem = 2;
+    col.cx = 240; col.iSubItem = 2; col.fmt = LVCFMT_LEFT;
     ListView_InsertColumn(lv, 2, &col);
 
     col.pszText = (LPWSTR)L"パス";
-    col.cx = 680; col.iSubItem = 3;
+    col.cx = 680; col.iSubItem = 3; col.fmt = LVCFMT_LEFT;
     ListView_InsertColumn(lv, 3, &col);
 }
 
@@ -1866,6 +1871,41 @@ static void ApplyModernListBox(HWND hwnd, int itemHeight = 30) {
     SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
 }
 
+static void ApplyModernComboBox(HWND hwnd, int selectionHeight = 30, int itemHeight = 30) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, selectionHeight);
+    SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, itemHeight);
+    SendMessageW(hwnd, CB_SETMINVISIBLE, 8, 0);
+}
+
+static void ApplyModernResultsListView(HWND hwnd) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    ListView_SetBkColor(hwnd, Theme::CardBg);
+    ListView_SetTextBkColor(hwnd, CLR_NONE);
+    ListView_SetTextColor(hwnd, Theme::Text);
+    ListView_SetExtendedListViewStyle(hwnd,
+        LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP | LVS_EX_LABELTIP);
+    HWND header = ListView_GetHeader(hwnd);
+    if (header) {
+        ApplyModernControlTheme(header);
+        SendMessageW(header, HDM_SETBITMAPMARGIN, 8, 0);
+    }
+
+    if (!g_hResultsRowImageList) {
+        g_hResultsRowImageList = ImageList_Create(1, 34, ILC_COLOR32, 1, 1);
+        if (g_hResultsRowImageList) {
+            HBITMAP bmp = CreateBitmap(1, 34, 1, 32, nullptr);
+            ImageList_Add(g_hResultsRowImageList, bmp, nullptr);
+            DeleteObject(bmp);
+        }
+    }
+    if (g_hResultsRowImageList) {
+        ListView_SetImageList(hwnd, g_hResultsRowImageList, LVSIL_SMALL);
+    }
+}
+
 static void ApplyModernDatePickerTheme(HWND hwnd) {
     if (!hwnd) return;
     ApplyModernControlTheme(hwnd);
@@ -1883,6 +1923,10 @@ static bool IsPrimaryButtonId(int id) {
 
 static bool IsDangerButtonId(int id) {
     return id == IDC_BTN_STOP;
+}
+
+static bool IsCsvButtonId(int id) {
+    return id == IDC_BTN_EXPORT_CSV;
 }
 
 static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius) {
@@ -1907,6 +1951,7 @@ static bool DrawModernButton(const DRAWITEMSTRUCT* dis) {
     const bool focused = (dis->itemState & ODS_FOCUS) != 0;
     const bool primary = IsPrimaryButtonId(id);
     const bool danger = IsDangerButtonId(id);
+    const bool csv = IsCsvButtonId(id);
 
     COLORREF fill = Theme::NeutralButton;
     COLORREF border = Theme::Border;
@@ -1926,6 +1971,11 @@ static bool DrawModernButton(const DRAWITEMSTRUCT* dis) {
         fill = pressed ? Theme::DangerHot : (hot ? RGB(254, 242, 242) : Theme::NeutralButton);
         border = hot || pressed ? Theme::Danger : RGB(252, 165, 165);
         textColor = pressed ? RGB(255, 255, 255) : Theme::Danger;
+    }
+    else if (csv) {
+        fill = pressed ? Theme::CsvButtonPressed : (hot ? Theme::CsvButtonHot : Theme::CsvButton);
+        border = Theme::CsvButtonBorder;
+        textColor = RGB(22, 101, 52);
     }
     else {
         fill = pressed ? Theme::NeutralButtonPressed : (hot ? Theme::NeutralButtonHot : Theme::NeutralButton);
@@ -1997,6 +2047,126 @@ static bool DrawModernListBox(const DRAWITEMSTRUCT* dis) {
     return true;
 }
 
+static LRESULT HandleResultsHeaderCustomDraw(LPNMCUSTOMDRAW cd) {
+    if (!cd) return CDRF_DODEFAULT;
+    switch (cd->dwDrawStage) {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT:
+    {
+        RECT rc = cd->rc;
+        HBRUSH bg = CreateSolidBrush(Theme::ListAltBg);
+        FillRect(cd->hdc, &rc, bg);
+        DeleteObject(bg);
+
+        HPEN line = CreatePen(PS_SOLID, 1, Theme::Border);
+        HGDIOBJ oldPen = SelectObject(cd->hdc, line);
+        MoveToEx(cd->hdc, rc.left, rc.bottom - 1, nullptr);
+        LineTo(cd->hdc, rc.right, rc.bottom - 1);
+        SelectObject(cd->hdc, oldPen);
+        DeleteObject(line);
+
+        wchar_t text[128]{};
+        HDITEMW item{};
+        item.mask = HDI_TEXT | HDI_FORMAT;
+        item.pszText = text;
+        item.cchTextMax = static_cast<int>(std::size(text));
+        Header_GetItem(cd->hdr.hwndFrom, static_cast<int>(cd->dwItemSpec), &item);
+
+        RECT textRc = rc;
+        textRc.left += 12;
+        textRc.right -= 12;
+        HFONT font = g_hFontUiBold ? g_hFontUiBold : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HGDIOBJ oldFont = SelectObject(cd->hdc, font);
+        SetBkMode(cd->hdc, TRANSPARENT);
+        SetTextColor(cd->hdc, Theme::MutedText);
+        UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS;
+        format |= (item.fmt & HDF_RIGHT) ? DT_RIGHT : DT_LEFT;
+        DrawTextW(cd->hdc, text, -1, &textRc, format);
+        SelectObject(cd->hdc, oldFont);
+        return CDRF_SKIPDEFAULT;
+    }
+    default:
+        return CDRF_DODEFAULT;
+    }
+}
+
+static bool DrawModernComboBox(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_COMBOBOX) return false;
+
+    RECT rc = dis->rcItem;
+    const bool editField = (dis->itemState & ODS_COMBOBOXEDIT) != 0;
+    const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+    const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0 || !IsWindowEnabled(dis->hwndItem);
+
+    std::wstring text;
+    UINT itemId = dis->itemID;
+    if (itemId == static_cast<UINT>(-1)) {
+        int sel = static_cast<int>(SendMessageW(dis->hwndItem, CB_GETCURSEL, 0, 0));
+        if (sel != CB_ERR) itemId = static_cast<UINT>(sel);
+    }
+    if (itemId != static_cast<UINT>(-1)) {
+        int len = static_cast<int>(SendMessageW(dis->hwndItem, CB_GETLBTEXTLEN, itemId, 0));
+        if (len >= 0) {
+            text.resize(static_cast<size_t>(len));
+            SendMessageW(dis->hwndItem, CB_GETLBTEXT, itemId, reinterpret_cast<LPARAM>(text.data()));
+        }
+    }
+
+    COLORREF bg = Theme::CardBg;
+    COLORREF fg = disabled ? Theme::DisabledText : Theme::Text;
+    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    if (!editField) {
+        bg = (itemId != static_cast<UINT>(-1) && (itemId % 2) != 0) ? Theme::ListAltBg : Theme::CardBg;
+        if (selected) {
+            bg = Theme::SelectedBg;
+            fg = Theme::SelectedText;
+        }
+    }
+
+    if (editField) {
+        RECT fillRc = rc;
+        InflateRect(&fillRc, -1, -1);
+        DrawRoundedRect(dis->hDC, fillRc, disabled ? Theme::DisabledBg : bg, border, 8);
+    }
+    else {
+        HBRUSH brush = CreateSolidBrush(bg);
+        FillRect(dis->hDC, &rc, brush);
+        DeleteObject(brush);
+    }
+
+    RECT textRc = rc;
+    textRc.left += editField ? 10 : 12;
+    textRc.right -= editField ? 22 : 10;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, fg);
+    DrawTextW(dis->hDC, text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(dis->hDC, oldFont);
+
+    if (editField && !disabled) {
+        POINT pts[3]{};
+        int cx = rc.right - 13;
+        int cy = rc.top + ((rc.bottom - rc.top) / 2) + 1;
+        pts[0] = { cx - 4, cy - 2 };
+        pts[1] = { cx + 4, cy - 2 };
+        pts[2] = { cx, cy + 3 };
+        HBRUSH arrow = CreateSolidBrush(Theme::MutedText);
+        HGDIOBJ oldBrush = SelectObject(dis->hDC, arrow);
+        HPEN pen = CreatePen(PS_SOLID, 1, Theme::MutedText);
+        HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+        Polygon(dis->hDC, pts, 3);
+        SelectObject(dis->hDC, oldPen);
+        SelectObject(dis->hDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(arrow);
+    }
+
+    return true;
+}
+
 static LRESULT HandleResultsCustomDraw(LPNMLVCUSTOMDRAW cd) {
     if (!cd) return CDRF_DODEFAULT;
     switch (cd->nmcd.dwDrawStage) {
@@ -2007,9 +2177,15 @@ static LRESULT HandleResultsCustomDraw(LPNMLVCUSTOMDRAW cd) {
     case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
     {
         const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+        const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
         const bool odd = (cd->nmcd.dwItemSpec % 2) != 0;
-        cd->clrTextBk = selected ? Theme::SelectedBg : (odd ? Theme::ListAltBg : Theme::CardBg);
-        cd->clrText = selected ? Theme::SelectedText : Theme::Text;
+        cd->clrTextBk = selected ? Theme::SelectedBg : (hot ? RGB(239, 246, 255) : (odd ? Theme::ListAltBg : Theme::CardBg));
+        cd->clrText = selected ? Theme::SelectedText : (cd->iSubItem == 3 ? Theme::MutedText : Theme::Text);
+        if (cd->iSubItem == 1) cd->clrText = selected ? Theme::SelectedText : RGB(55, 65, 81);
+        if (cd->iSubItem == 2 && g_hFontUiBold) {
+            SelectObject(cd->nmcd.hdc, g_hFontUiBold);
+            return CDRF_NEWFONT;
+        }
         return CDRF_DODEFAULT;
     }
     default:
@@ -3168,7 +3344,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
 
         // Mode controls
-        g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_MODE, g_hInst, nullptr);
         SendMessageW(g_cmbMode, CB_ADDSTRING, 0, (LPARAM)L"今日");
         SendMessageW(g_cmbMode, CB_ADDSTRING, 0, (LPARAM)L"過去N日");
@@ -3179,7 +3355,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_DAYS, g_hInst, nullptr);
 
         // NEW: time base
-        g_cmbTimeBase = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        g_cmbTimeBase = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_TIMEBASE, g_hInst, nullptr);
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新日時");
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"作成日時");
@@ -3314,7 +3490,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 
         // Results
-        g_listResults = CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_RESULTS, g_hInst, nullptr);
+        g_listResults = CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_RESULTS, g_hInst, nullptr);
         InitListViewColumns(g_listResults);
 
         // Status
@@ -3343,6 +3519,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         ApplyModernListBox(g_listRoots);
         ApplyModernListBox(g_listExcludes);
         ApplyModernListBox(g_listFName);
+        ApplyModernComboBox(g_cmbMode);
+        ApplyModernComboBox(g_cmbTimeBase);
+        ApplyModernResultsListView(g_listResults);
 
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
@@ -3443,7 +3622,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_DRAWITEM:
     {
         auto* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (DrawModernTab(dis) || DrawModernButton(dis) || DrawModernListBox(dis)) return TRUE;
+        if (DrawModernTab(dis) || DrawModernButton(dis) || DrawModernListBox(dis) || DrawModernComboBox(dis)) return TRUE;
         break;
     }
 
@@ -3709,6 +3888,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         LPNMHDR hdr = (LPNMHDR)lParam;
         if (!hdr) break;
 
+        if (g_listResults && hdr->hwndFrom == ListView_GetHeader(g_listResults) && hdr->code == NM_CUSTOMDRAW) {
+            return HandleResultsHeaderCustomDraw(reinterpret_cast<LPNMCUSTOMDRAW>(lParam));
+        }
+
         if (hdr->hwndFrom == g_tabLeft) {
             if (hdr->code == TCN_SELCHANGE) {
                 int sel = TabCtrl_GetCurSel(g_tabLeft);
@@ -3854,6 +4037,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (g_hBrushAppBg) { DeleteObject(g_hBrushAppBg); g_hBrushAppBg = nullptr; }
         if (g_hBrushCardBg) { DeleteObject(g_hBrushCardBg); g_hBrushCardBg = nullptr; }
         if (g_hBrushEditBg) { DeleteObject(g_hBrushEditBg); g_hBrushEditBg = nullptr; }
+        if (g_hResultsRowImageList) { ImageList_Destroy(g_hResultsRowImageList); g_hResultsRowImageList = nullptr; }
         if (GetParent(hwnd) == nullptr) {
             PostQuitMessage(0);
         }

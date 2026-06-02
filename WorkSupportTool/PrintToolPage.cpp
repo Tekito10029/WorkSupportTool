@@ -158,6 +158,14 @@ namespace {
         SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
     }
 
+    static void ApplyModernComboBox(HWND hwnd, int selectionHeight = 30, int itemHeight = 30) {
+        if (!hwnd) return;
+        ApplyModernControlTheme(hwnd);
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, selectionHeight);
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, itemHeight);
+        SendMessageW(hwnd, CB_SETMINVISIBLE, 8, 0);
+    }
+
     static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius) {
         HBRUSH brush = CreateSolidBrush(fill);
         HPEN pen = CreatePen(PS_SOLID, 1, border);
@@ -270,6 +278,82 @@ namespace {
         SelectObject(hdc, oldBrush);
         DeleteObject(border);
         DeleteObject(card);
+    }
+
+    static bool DrawModernComboBox(const DRAWITEMSTRUCT* dis) {
+        if (!dis || dis->CtlType != ODT_COMBOBOX) return false;
+
+        RECT rc = dis->rcItem;
+        const bool editField = (dis->itemState & ODS_COMBOBOXEDIT) != 0;
+        const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+        const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+        const bool disabled = (dis->itemState & ODS_DISABLED) != 0 || !IsWindowEnabled(dis->hwndItem);
+
+        std::wstring text;
+        UINT itemId = dis->itemID;
+        if (itemId == static_cast<UINT>(-1)) {
+            int sel = static_cast<int>(SendMessageW(dis->hwndItem, CB_GETCURSEL, 0, 0));
+            if (sel != CB_ERR) itemId = static_cast<UINT>(sel);
+        }
+        if (itemId != static_cast<UINT>(-1)) {
+            int len = static_cast<int>(SendMessageW(dis->hwndItem, CB_GETLBTEXTLEN, itemId, 0));
+            if (len >= 0) {
+                text.resize(static_cast<size_t>(len));
+                SendMessageW(dis->hwndItem, CB_GETLBTEXT, itemId, reinterpret_cast<LPARAM>(text.data()));
+            }
+        }
+
+        COLORREF bg = Theme::CardBg;
+        COLORREF fg = disabled ? Theme::DisabledText : Theme::Text;
+        COLORREF border = focused ? Theme::Primary : Theme::Border;
+        if (!editField) {
+            bg = (itemId != static_cast<UINT>(-1) && (itemId % 2) != 0) ? Theme::ListAltBg : Theme::CardBg;
+            if (selected) {
+                bg = Theme::SelectedBg;
+                fg = Theme::SelectedText;
+            }
+        }
+
+        if (editField) {
+            RECT fillRc = rc;
+            InflateRect(&fillRc, -1, -1);
+            DrawRoundedRect(dis->hDC, fillRc, disabled ? Theme::DisabledBg : bg, border, 8);
+        }
+        else {
+            HBRUSH brush = CreateSolidBrush(bg);
+            FillRect(dis->hDC, &rc, brush);
+            DeleteObject(brush);
+        }
+
+        RECT textRc = rc;
+        textRc.left += editField ? 10 : 12;
+        textRc.right -= editField ? 22 : 10;
+        HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+        HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+        SetBkMode(dis->hDC, TRANSPARENT);
+        SetTextColor(dis->hDC, fg);
+        DrawTextW(dis->hDC, text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (oldFont) SelectObject(dis->hDC, oldFont);
+
+        if (editField && !disabled) {
+            POINT pts[3]{};
+            int cx = rc.right - 13;
+            int cy = rc.top + ((rc.bottom - rc.top) / 2) + 1;
+            pts[0] = { cx - 4, cy - 2 };
+            pts[1] = { cx + 4, cy - 2 };
+            pts[2] = { cx, cy + 3 };
+            HBRUSH arrow = CreateSolidBrush(Theme::MutedText);
+            HGDIOBJ oldBrush = SelectObject(dis->hDC, arrow);
+            HPEN pen = CreatePen(PS_SOLID, 1, Theme::MutedText);
+            HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+            Polygon(dis->hDC, pts, 3);
+            SelectObject(dis->hDC, oldPen);
+            SelectObject(dis->hDC, oldBrush);
+            DeleteObject(pen);
+            DeleteObject(arrow);
+        }
+
+        return true;
     }
 
     static void PaintPageBackground(HWND hwnd, HDC hdc) {
@@ -1386,7 +1470,7 @@ namespace {
             g_staticPrinter = CreateWindowW(L"STATIC", L"プリンタ",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PRINTER, g_hInst, nullptr);
             g_cmbPrinter = CreateWindowW(WC_COMBOBOXW, L"",
-                WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PRINTER, g_hInst, nullptr);
             g_btnPrinterProp = CreateWindowW(L"BUTTON", L"各種設定...",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINTER_PROP, g_hInst, nullptr);
@@ -1394,7 +1478,7 @@ namespace {
             g_staticPaper = CreateWindowW(L"STATIC", L"用紙",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PAPER, g_hInst, nullptr);
             g_cmbPaper = CreateWindowW(WC_COMBOBOXW, L"",
-                WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PAPER, g_hInst, nullptr);
 
             g_btnPrint = CreateWindowW(L"BUTTON", L"3. 印刷を実行",
@@ -1432,6 +1516,8 @@ namespace {
                 }
             }
             ApplyModernListBox(g_listFiles);
+            ApplyModernComboBox(g_cmbPrinter);
+            ApplyModernComboBox(g_cmbPaper);
             SendMessageW(g_btnPrint, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
             HWND modernButtons[] = {
@@ -1492,7 +1578,7 @@ namespace {
         case WM_DRAWITEM:
             {
                 auto* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-                if (DrawModernButton(dis) || DrawModernListBox(dis)) return TRUE;
+                if (DrawModernButton(dis) || DrawModernListBox(dis) || DrawModernComboBox(dis)) return TRUE;
             }
             break;
 
