@@ -65,8 +65,7 @@ constexpr COLORREF ProgressBg = RGB(229, 231, 235);
 
 // -------------------- IDs --------------------
 enum : int {
-    IDC_EDIT_ROOT = 101,
-    IDC_BTN_BROWSE_ROOT,
+    IDC_BTN_BROWSE_ROOT = 102,
 
     // Roots list (NEW - intuitive multi-folder)
     IDC_LIST_ROOTS,
@@ -152,8 +151,6 @@ enum : int {
     // Left panel tab (Search / Excludes)
     IDC_TAB_LEFT,
 
-    // Advanced (legacy; unused in tab UI)
-    IDC_BTN_TOGGLE_ADVANCED,
 };
 
 // Popup menu commands (not control IDs)
@@ -238,7 +235,6 @@ static HWND g_staticExclFolder = nullptr;
 static HWND g_staticExclPattern = nullptr;
 static HWND g_staticExclName = nullptr;
 
-static HWND g_editRoot = nullptr;      // legacy (kept but hidden)
 static HWND g_btnBrowseRoot = nullptr; // repurposed as Add...
 static HWND g_listRoots = nullptr;
 static HWND g_btnRootRemove = nullptr;
@@ -368,7 +364,6 @@ static std::wstring Trim(const std::wstring& s);
 static std::wstring GetWindowTextWStr(HWND h);
 static void SetWindowTextWStr(HWND h, const std::wstring& s);
 static fs::path NormalizePath(const fs::path& p);
-static void SyncLegacyRootEditFromList();
 
 // ---- Forward declarations (used before definitions) ----
 // Needed because some handlers/commit functions appear before these are defined.
@@ -392,17 +387,6 @@ static std::vector<std::wstring> GetRootsFromListBox()
         if (!t.empty()) out.push_back(t);
     }
     return out;
-}
-
-static void SetRootsToListBox(const std::vector<std::wstring>& roots)
-{
-    if (!g_listRoots) return;
-    SendMessageW(g_listRoots, LB_RESETCONTENT, 0, 0);
-    for (const auto& s : roots) {
-        auto t = Trim(s);
-        if (t.empty()) continue;
-        SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)t.c_str());
-    }
 }
 
 static const wchar_t* kRootEnabledPrefix = L"[有効] ";
@@ -478,44 +462,6 @@ static std::vector<std::wstring> GetEnabledRootsFromListBox()
     return out;
 }
 
-static std::wstring SerializeRootEntries(const std::vector<RootEntry>& entries)
-{
-    std::wstring out;
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (i) out += L"\n";
-        out += (entries[i].enabled ? L"1\t" : L"0\t");
-        out += entries[i].path;
-    }
-    return out;
-}
-
-static std::vector<RootEntry> DeserializeRootEntries(const std::wstring& text)
-{
-    std::vector<RootEntry> out;
-    size_t pos = 0;
-    while (pos <= text.size()) {
-        size_t nl = text.find(L'\n', pos);
-        std::wstring line = (nl == std::wstring::npos) ? text.substr(pos) : text.substr(pos, nl - pos);
-        if (!line.empty() && line.back() == L'\r') line.pop_back();
-        pos = (nl == std::wstring::npos) ? text.size() + 1 : nl + 1;
-
-        line = Trim(line);
-        if (line.empty()) continue;
-
-        RootEntry e;
-        if (line.size() >= 2 && (line[0] == L'0' || line[0] == L'1') && line[1] == L'\t') {
-            e.enabled = (line[0] == L'1');
-            e.path = Trim(line.substr(2));
-        }
-        else {
-            e.enabled = true;
-            e.path = Trim(line);
-        }
-        if (!e.path.empty()) out.push_back(std::move(e));
-    }
-    return out;
-}
-
 static bool ToggleSelectedRootEnabled()
 {
     if (!g_listRoots) return false;
@@ -536,7 +482,6 @@ static bool ToggleSelectedRootEnabled()
     int idx = (int)SendMessageW(g_listRoots, LB_INSERTSTRING, (WPARAM)sel, (LPARAM)disp.c_str());
     SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
 
-    SyncLegacyRootEditFromList();
     return true;
 }
 
@@ -578,13 +523,6 @@ static void MoveRootItem(int from, int to)
     SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
 }
 
-static std::vector<fs::path> GetRootPathsNormalizedFromUI()
-{
-    std::vector<fs::path> roots;
-    auto lines = GetEnabledRootsFromListBox();
-    for (auto& s : lines) roots.push_back(NormalizePath(fs::path(s)));
-    return roots;
-}
 // ---------------------------------------------------
 
 static std::vector<std::wstring> SplitRootsText(const std::wstring& text)
@@ -627,38 +565,6 @@ static std::wstring JoinRootsForIni(const std::vector<std::wstring>& roots)
     return out;
 }
 
-static void SyncLegacyRootEditFromList()
-{
-    // Search thread currently reads g_editRoot. Keep it in sync with enabled roots only.
-    auto roots = GetEnabledRootsFromListBox();
-    SetWindowTextWStr(g_editRoot, JoinRootsForIni(roots)); // '|' separated is OK for SplitRootsText
-}
-
-static std::vector<fs::path> GetRootPathsNormalized()
-{
-    std::vector<fs::path> roots;
-    auto items = SplitRootsText(GetWindowTextWStr(g_editRoot));
-    for (auto& s : items) roots.push_back(NormalizePath(fs::path(s)));
-    return roots;
-}
-
-static void AppendRootToEditIfMissing(const std::wstring& folderPath)
-{
-    auto items = SplitRootsText(GetWindowTextWStr(g_editRoot));
-    std::wstring lowNew = ToLower(Trim(folderPath));
-    for (auto& s : items) {
-        if (ToLower(Trim(s)) == lowNew) return;
-    }
-    items.push_back(Trim(folderPath));
-
-    // UIは1行のまま：';'区切りで表示
-    std::wstring disp;
-    for (size_t i = 0; i < items.size(); ++i) {
-        if (i) disp += L"; ";
-        disp += items[i];
-    }
-    SetWindowTextWStr(g_editRoot, disp);
-}
 static std::wstring GetWindowTextWStr(HWND h) {
     int len = GetWindowTextLengthW(h);
     std::wstring s(len, L'\0');
@@ -877,14 +783,6 @@ static bool GetFileTimesSysClock(const std::wstring& path,
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return false;
     outWrite = FileTimeToSysClock(fad.ftLastWriteTime);
     outCreate = FileTimeToSysClock(fad.ftCreationTime);
-    return true;
-}
-
-static bool GetFileTimeSysClock(const std::wstring& path, TimeBase tb, std::chrono::system_clock::time_point& outTp)
-{
-    std::chrono::system_clock::time_point w, c;
-    if (!GetFileTimesSysClock(path, w, c)) return false;
-    outTp = (tb == TimeBase::Creation) ? c : w;
     return true;
 }
 
@@ -2848,10 +2746,6 @@ static void LoadSettings() {
 
     SetRootEntriesToListBox(entries);
 
-    SyncLegacyRootEditFromList();
-    auto enabledRoots = GetEnabledRootsFromListBox();
-    if (!enabledRoots.empty()) SetWindowTextWStr(g_editRoot, enabledRoots[0]);
-
     g_lastExcludeFile = IniReadStr(L"Main", L"ExcludeFile", g_lastExcludeFile.empty() ? (GetExeDir() + L"\\exclude.txt") : g_lastExcludeFile);
     g_lastCsvFile = IniReadStr(L"Main", L"CsvFile", g_lastCsvFile.empty() ? (GetExeDir() + L"\\results.csv") : g_lastCsvFile);
     g_lastNameExcludeFile = IniReadStr(L"Main", L"NameExcludeFile", g_lastNameExcludeFile.empty() ? (GetExeDir() + L"\\name_exclude.txt") : g_lastNameExcludeFile);
@@ -2992,7 +2886,6 @@ static void SetSearchingUi(bool searching) {
     EnableWindow(g_btnRootUp, !searching);
     EnableWindow(g_btnRootDown, !searching);
     EnableWindow(g_btnRootToggle, !searching);
-    EnableWindow(g_editRoot, !searching);
     EnableWindow(g_cmbMode, !searching);
     EnableWindow(g_editDays, !searching);
     EnableWindow(g_cmbTimeBase, !searching);
@@ -3421,7 +3314,6 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
         std::wstring p;
         if (PickFolder(hwnd, p)) {
             AddRootToListBoxDedup(p);
-            SyncLegacyRootEditFromList();
             SaveSettings();
         }
         return;
@@ -3430,14 +3322,12 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
 
     if (cmd == CMD_ROOT_REMOVE) {
         SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)sel, 0);
-        SyncLegacyRootEditFromList();
         SaveSettings();
     }
     else if (cmd == CMD_ROOT_UP || cmd == CMD_ROOT_DOWN) {
         int tgt = (cmd == CMD_ROOT_UP) ? (sel - 1) : (sel + 1);
         if (tgt >= 0 && tgt < n) {
             MoveRootItem(sel, tgt);
-            SyncLegacyRootEditFromList();
             SaveSettings();
         }
     }
@@ -3724,9 +3614,6 @@ static void StartSearch() {
     TimeBase tb = GetTimeBase();
     SetListViewTimeHeader(tb);
 
-    // Sync multi-root list to legacy edit so worker thread can read it safely
-    SyncLegacyRootEditFromList();
-
     std::wstring modeText = GetModeTextForStatus();
     SetStatus(L"検索中（" + modeText + L" / " + TimeBaseText(tb) + L"）...");
 
@@ -3736,7 +3623,7 @@ static void StartSearch() {
     GetActiveDateRange(params->rangeStart, params->rangeEnd);
     params->timeBase = tb;
 
-    auto rootItems = SplitRootsText(GetWindowTextWStr(g_editRoot));
+    auto rootItems = GetEnabledRootsFromListBox();
     for (auto& s : rootItems) {
         std::error_code ec;
         fs::path r = NormalizePath(fs::path(s));
@@ -3794,8 +3681,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_staticExclName = CreateWindowW(L"STATIC", L"ファイル名除外:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
         // Root controls
-        g_editRoot = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_ROOT, g_hInst, nullptr);
         g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
 
         // Roots list (intuitive multi-folder)
@@ -3961,7 +3846,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HWND controls[] = {
             g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticFrom, g_staticTo, g_staticFilter,
             g_staticExclFolder, g_staticExclPattern, g_staticExclName,
-            g_editRoot, g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
+            g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
             g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo,
             g_frameFolderExcl, g_frameNameExcl,
             g_chkEnableFolderExcl, g_listExcludes, g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
@@ -4003,9 +3888,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         // Load settings
         LoadSettings();
-
-        // legacy single-root edit (not used in multi-root UI)
-        ShowWindow(g_editRoot, SW_HIDE);
 
         EnableWindow(g_btnStop, FALSE);
         EnableWindow(g_btnExportCsv, FALSE);
@@ -4107,7 +3989,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             std::wstring p;
             if (PickFolder(hwnd, p)) {
                 AddRootToListBoxDedup(p);
-                SyncLegacyRootEditFromList();
                 SaveSettings();
             }
             return 0;
@@ -4124,7 +4005,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int sel = (int)SendMessageW(g_listRoots, LB_GETCURSEL, 0, 0);
             if (sel != LB_ERR) {
                 SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)sel, 0);
-                SyncLegacyRootEditFromList();
                 SaveSettings();
             }
             return 0;
@@ -4143,7 +4023,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int tgt = (id == IDC_BTN_ROOT_UP) ? (sel - 1) : (sel + 1);
             if (tgt < 0 || tgt >= n) return 0;
             MoveRootItem(sel, tgt);
-            SyncLegacyRootEditFromList();
             SaveSettings();
             return 0;
         }
