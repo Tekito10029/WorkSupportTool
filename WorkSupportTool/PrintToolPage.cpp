@@ -48,6 +48,9 @@ namespace {
         constexpr COLORREF NeutralButtonPressed = RGB(232, 238, 248);
         constexpr COLORREF DisabledBg = RGB(229, 231, 235);
         constexpr COLORREF DisabledText = RGB(156, 163, 175);
+        constexpr COLORREF ListAltBg = RGB(248, 250, 252);
+        constexpr COLORREF SelectedBg = RGB(219, 234, 254);
+        constexpr COLORREF SelectedText = RGB(30, 64, 175);
     }
 
     enum : int {
@@ -149,6 +152,12 @@ namespace {
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
+    static void ApplyModernListBox(HWND hwnd, int itemHeight = 30) {
+        if (!hwnd) return;
+        ApplyModernControlTheme(hwnd);
+        SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
+    }
+
     static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius) {
         HBRUSH brush = CreateSolidBrush(fill);
         HPEN pen = CreatePen(PS_SOLID, 1, border);
@@ -203,6 +212,53 @@ namespace {
         if (oldFont) SelectObject(dis->hDC, oldFont);
         return true;
     }
+
+    static bool DrawModernListBox(const DRAWITEMSTRUCT* dis) {
+        if (!dis || dis->CtlType != ODT_LISTBOX) return false;
+        if (dis->itemID == static_cast<UINT>(-1)) return true;
+
+        wchar_t text[2048]{};
+        SendMessageW(dis->hwndItem, LB_GETTEXT, dis->itemID, reinterpret_cast<LPARAM>(text));
+
+        const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+        const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+        RECT rc = dis->rcItem;
+
+        COLORREF bg = (dis->itemID % 2 == 0) ? Theme::CardBg : Theme::ListAltBg;
+        COLORREF fg = Theme::Text;
+        if (selected) {
+            bg = Theme::SelectedBg;
+            fg = Theme::SelectedText;
+        }
+
+        HBRUSH brush = CreateSolidBrush(bg);
+        FillRect(dis->hDC, &rc, brush);
+        DeleteObject(brush);
+
+        RECT textRc = rc;
+        textRc.left += 12;
+        textRc.right -= 10;
+        HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+        HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+        SetBkMode(dis->hDC, TRANSPARENT);
+        SetTextColor(dis->hDC, fg);
+        DrawTextW(dis->hDC, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (oldFont) SelectObject(dis->hDC, oldFont);
+
+        if (focused) {
+            HPEN pen = CreatePen(PS_SOLID, 1, Theme::Primary);
+            HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+            HGDIOBJ oldBrush = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
+            RECT focusRc = rc;
+            InflateRect(&focusRc, -2, -2);
+            RoundRect(dis->hDC, focusRc.left, focusRc.top, focusRc.right, focusRc.bottom, 8, 8);
+            SelectObject(dis->hDC, oldBrush);
+            SelectObject(dis->hDC, oldPen);
+            DeleteObject(pen);
+        }
+        return true;
+    }
+
 
     static void DrawCard(HDC hdc, const RECT& rc) {
         HBRUSH card = CreateSolidBrush(Theme::CardBg);
@@ -1298,7 +1354,7 @@ namespace {
             g_staticFiles = CreateWindowW(L"STATIC", L"1. 印刷するブック",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
             g_listFiles = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_BORDER,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FILES, g_hInst, nullptr);
             g_btnAddFiles = CreateWindowW(L"BUTTON", L"ファイル追加",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FILES, g_hInst, nullptr);
@@ -1375,6 +1431,7 @@ namespace {
                     SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
                 }
             }
+            ApplyModernListBox(g_listFiles);
             SendMessageW(g_btnPrint, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
             HWND modernButtons[] = {
@@ -1433,7 +1490,10 @@ namespace {
         }
 
         case WM_DRAWITEM:
-            if (DrawModernButton(reinterpret_cast<DRAWITEMSTRUCT*>(lParam))) return TRUE;
+            {
+                auto* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+                if (DrawModernButton(dis) || DrawModernListBox(dis)) return TRUE;
+            }
             break;
 
         case WM_SIZE:

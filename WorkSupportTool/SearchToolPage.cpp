@@ -52,6 +52,9 @@ constexpr COLORREF Danger = RGB(220, 38, 38);
 constexpr COLORREF DangerHot = RGB(185, 28, 28);
 constexpr COLORREF DisabledBg = RGB(229, 231, 235);
 constexpr COLORREF DisabledText = RGB(156, 163, 175);
+constexpr COLORREF ListAltBg = RGB(248, 250, 252);
+constexpr COLORREF SelectedBg = RGB(219, 234, 254);
+constexpr COLORREF SelectedText = RGB(30, 64, 175);
 constexpr COLORREF ProgressBg = RGB(229, 231, 235);
 }
 
@@ -1857,6 +1860,23 @@ static void EnableModernOwnerDrawButton(HWND hwnd) {
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
+static void ApplyModernListBox(HWND hwnd, int itemHeight = 30) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
+}
+
+static void ApplyModernDatePickerTheme(HWND hwnd) {
+    if (!hwnd) return;
+    ApplyModernControlTheme(hwnd);
+    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_BACKGROUND, Theme::AppBg);
+    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_MONTHBK, Theme::CardBg);
+    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TEXT, Theme::Text);
+    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TITLEBK, Theme::Primary);
+    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TITLETEXT, RGB(255, 255, 255));
+    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TRAILINGTEXT, Theme::MutedText);
+}
+
 static bool IsPrimaryButtonId(int id) {
     return id == IDC_BTN_SEARCH;
 }
@@ -1926,6 +1946,77 @@ static bool DrawModernButton(const DRAWITEMSTRUCT* dis) {
     if (oldFont) SelectObject(dis->hDC, oldFont);
     return true;
 }
+
+static bool DrawModernListBox(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_LISTBOX) return false;
+    if (dis->itemID == static_cast<UINT>(-1)) return true;
+
+    wchar_t text[2048]{};
+    SendMessageW(dis->hwndItem, LB_GETTEXT, dis->itemID, reinterpret_cast<LPARAM>(text));
+
+    const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+    const bool focused = (dis->itemState & ODS_FOCUS) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    RECT rc = dis->rcItem;
+
+    COLORREF bg = (dis->itemID % 2 == 0) ? Theme::CardBg : Theme::ListAltBg;
+    COLORREF fg = Theme::Text;
+    if (selected) {
+        bg = Theme::SelectedBg;
+        fg = Theme::SelectedText;
+    }
+    if (disabled || wcsncmp(text, L"[無効]", 4) == 0) {
+        fg = Theme::DisabledText;
+    }
+
+    HBRUSH brush = CreateSolidBrush(bg);
+    FillRect(dis->hDC, &rc, brush);
+    DeleteObject(brush);
+
+    RECT textRc = rc;
+    textRc.left += 12;
+    textRc.right -= 10;
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, fg);
+    DrawTextW(dis->hDC, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(dis->hDC, oldFont);
+
+    if (focused) {
+        HPEN pen = CreatePen(PS_SOLID, 1, Theme::Primary);
+        HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+        HGDIOBJ oldBrush = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
+        RECT focusRc = rc;
+        InflateRect(&focusRc, -2, -2);
+        RoundRect(dis->hDC, focusRc.left, focusRc.top, focusRc.right, focusRc.bottom, 8, 8);
+        SelectObject(dis->hDC, oldBrush);
+        SelectObject(dis->hDC, oldPen);
+        DeleteObject(pen);
+    }
+    return true;
+}
+
+static LRESULT HandleResultsCustomDraw(LPNMLVCUSTOMDRAW cd) {
+    if (!cd) return CDRF_DODEFAULT;
+    switch (cd->nmcd.dwDrawStage) {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT:
+        return CDRF_NOTIFYSUBITEMDRAW;
+    case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+    {
+        const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+        const bool odd = (cd->nmcd.dwItemSpec % 2) != 0;
+        cd->clrTextBk = selected ? Theme::SelectedBg : (odd ? Theme::ListAltBg : Theme::CardBg);
+        cd->clrText = selected ? Theme::SelectedText : Theme::Text;
+        return CDRF_DODEFAULT;
+    }
+    default:
+        return CDRF_DODEFAULT;
+    }
+}
+
 
 static bool DrawModernTab(const DRAWITEMSTRUCT* dis) {
     if (!dis || dis->CtlType != ODT_TAB || dis->hwndItem != g_tabLeft) return false;
@@ -3068,7 +3159,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
 
         // Roots list (intuitive multi-folder)
-        g_listRoots = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+        g_listRoots = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_ROOTS, g_hInst, nullptr);
 
         g_btnRootRemove = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_REMOVE, g_hInst, nullptr);
@@ -3162,7 +3253,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkEnableFolderExcl = CreateWindowW(L"BUTTON", L"フォルダ除外を有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_ENABLE_FOLDER_EXCL, g_hInst, nullptr);
 
-        g_listExcludes = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+        g_listExcludes = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_EXCLUDES, g_hInst, nullptr);
 
         g_btnAddExclFolder = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_EXCL_FOLDER, g_hInst, nullptr);
@@ -3186,7 +3277,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_oldFNameEditProc = (WNDPROC)SetWindowLongPtrW(g_editFNamePattern, GWLP_WNDPROC, (LONG_PTR)FNameEditProc);
         g_btnFNameUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_UP, g_hInst, nullptr);
         g_btnFNameDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_DOWN, g_hInst, nullptr);
-        g_listFName = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FNAME, g_hInst, nullptr);
+        g_listFName = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FNAME, g_hInst, nullptr);
 
         g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
         g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
@@ -3247,6 +3338,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
             }
         }
+        ApplyModernDatePickerTheme(g_dtpFrom);
+        ApplyModernDatePickerTheme(g_dtpTo);
+        ApplyModernListBox(g_listRoots);
+        ApplyModernListBox(g_listExcludes);
+        ApplyModernListBox(g_listFName);
+
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
         HWND modernButtons[] = {
@@ -3346,7 +3443,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_DRAWITEM:
     {
         auto* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (DrawModernTab(dis) || DrawModernButton(dis)) return TRUE;
+        if (DrawModernTab(dis) || DrawModernButton(dis) || DrawModernListBox(dis)) return TRUE;
         break;
     }
 
@@ -3621,6 +3718,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (hdr->hwndFrom == g_listResults) {
+            if (hdr->code == NM_CUSTOMDRAW) {
+                return HandleResultsCustomDraw(reinterpret_cast<LPNMLVCUSTOMDRAW>(lParam));
+            }
             if (hdr->hwndFrom == g_listResults) {
                 if (hdr->code == NM_DBLCLK) {
                     int sel = ListView_GetNextItem(g_listResults, -1, LVNI_SELECTED);
