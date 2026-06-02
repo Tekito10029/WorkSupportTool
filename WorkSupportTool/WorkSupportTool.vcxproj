@@ -53,6 +53,9 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
@@ -138,7 +141,7 @@
     <ClInclude Include="SearchToolPage.h" />
   </ItemGroup>
   <ItemGroup>
-    <Xml Include="app.manifest.xml" />
+    <Xml Include="app.manifest" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Main.cpp" />
