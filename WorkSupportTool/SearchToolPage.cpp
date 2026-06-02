@@ -186,6 +186,9 @@ static const UINT WM_APP_THREADERR = WM_APP + 4;
 static const UINT WM_APP_TOTAL = WM_APP + 5;
 
 static const UINT WM_APP_SCANPATH = WM_APP + 6; // NEW: show current scanning folder
+
+static void CloseModernCalendarPopup();
+
 // -------------------- Models --------------------
 struct Hit {
     std::wstring timeText;        // 表示用（更新/作成どちらでも）
@@ -303,6 +306,11 @@ static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
 static HWND g_dtpFrom = nullptr;
 static HWND g_dtpTo = nullptr;
+static SYSTEMTIME g_dateFrom{};
+static SYSTEMTIME g_dateTo{};
+static HWND g_calendarPopup = nullptr;
+static HWND g_calendarTarget = nullptr;
+static SYSTEMTIME g_calendarMonth{};
 
 // advanced toggle
 
@@ -767,10 +775,9 @@ static void GetActiveDateRange(std::chrono::system_clock::time_point& outS,
     }
 
     // mode == 2: 期間指定（カレンダー）
-    SYSTEMTIME stFrom{}, stTo{};
-    if (DateTime_GetSystemtime(g_dtpFrom, &stFrom) != GDT_VALID ||
-        DateTime_GetSystemtime(g_dtpTo, &stTo) != GDT_VALID)
-    {
+    SYSTEMTIME stFrom = g_dateFrom;
+    SYSTEMTIME stTo = g_dateTo;
+    if (stFrom.wYear == 0 || stTo.wYear == 0) {
         // 万一取れない場合は「今日」にフォールバック
         GetLocalDayRangePastNDays(1, outS, outE);
         return;
@@ -1820,6 +1827,7 @@ static void UpdateUiEnableStates() {
 
     bool useDays = (mode == 1);
     bool useCal = (mode == 2);
+    if (g_leftTab != 0 || !useCal) CloseModernCalendarPopup();
 
     if (g_leftTab != 0) {
         // 除外タブでは、検索期間系は非表示/無効（誤って復活表示しないようにする）
@@ -1970,6 +1978,64 @@ static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+static std::wstring FormatDateText(const SYSTEMTIME& st) {
+    if (st.wYear == 0) return L"";
+    wchar_t buf[32]{};
+    _snwprintf_s(buf, _TRUNCATE, L"%04u/%02u/%02u", st.wYear, st.wMonth, st.wDay);
+    return buf;
+}
+
+static SYSTEMTIME& DateForPicker(HWND hwnd) {
+    return hwnd == g_dtpTo ? g_dateTo : g_dateFrom;
+}
+
+static void UpdateModernDatePickerText(HWND hwnd) {
+    if (!hwnd) return;
+    SetWindowTextW(hwnd, FormatDateText(DateForPicker(hwnd)).c_str());
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+static bool IsLeapYear(WORD year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+static int DaysInMonth(WORD year, WORD month) {
+    static constexpr int days[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    if (month == 2) return IsLeapYear(year) ? 29 : 28;
+    if (month < 1 || month > 12) return 31;
+    return days[month - 1];
+}
+
+static int DayOfWeek(WORD year, WORD month, WORD day) {
+    SYSTEMTIME st{};
+    st.wYear = year;
+    st.wMonth = month;
+    st.wDay = day;
+    FILETIME ft{};
+    if (!SystemTimeToFileTime(&st, &ft)) return 0;
+    SYSTEMTIME back{};
+    FileTimeToSystemTime(&ft, &back);
+    return back.wDayOfWeek;
+}
+
+static void OffsetCalendarMonth(int delta) {
+    int month = static_cast<int>(g_calendarMonth.wMonth) + delta;
+    int year = static_cast<int>(g_calendarMonth.wYear);
+    while (month < 1) { month += 12; --year; }
+    while (month > 12) { month -= 12; ++year; }
+    g_calendarMonth.wYear = static_cast<WORD>(max(1601, min(9999, year)));
+    g_calendarMonth.wMonth = static_cast<WORD>(month);
+    g_calendarMonth.wDay = 1;
+}
+
+static void CloseModernCalendarPopup() {
+    if (g_calendarPopup && IsWindow(g_calendarPopup)) {
+        DestroyWindow(g_calendarPopup);
+    }
+    g_calendarPopup = nullptr;
+    g_calendarTarget = nullptr;
+}
+
 static void DrawModernDatePickerFace(HWND hwnd, HDC hdc) {
     if (!hwnd || !hdc) return;
 
@@ -2025,6 +2091,8 @@ static void DrawModernDatePickerFace(HWND hwnd, HDC hdc) {
     DeleteObject(pen);
 }
 
+static void ShowModernCalendarPopup(HWND target);
+
 static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
     UINT_PTR, DWORD_PTR) {
     switch (msg) {
@@ -2045,21 +2113,210 @@ static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam,
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
     case WM_ENABLE:
-    case WM_LBUTTONUP:
         InvalidateRect(hwnd, nullptr, TRUE);
         break;
-    case DTM_SETSYSTEMTIME:
-    case DTM_SETFORMATW:
-    {
-        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-        InvalidateRect(hwnd, nullptr, TRUE);
-        return result;
-    }
+    case WM_LBUTTONDOWN:
+        SetFocus(hwnd);
+        ShowModernCalendarPopup(hwnd);
+        return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_SPACE || wParam == VK_RETURN || wParam == VK_DOWN) {
+            ShowModernCalendarPopup(hwnd);
+            return 0;
+        }
+        break;
     case WM_NCDESTROY:
         RemoveWindowSubclass(hwnd, ModernDatePickerProc, 1);
         break;
     }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static void PaintModernCalendarPopup(HWND hwnd, HDC hdc) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    FillRect(hdc, &rc, g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+
+    RECT card = rc;
+    card.right -= 1;
+    card.bottom -= 1;
+    DrawRoundedRect(hdc, card, Theme::CardBg, Theme::Border, 14);
+
+    HFONT oldFont = reinterpret_cast<HFONT>(SelectObject(hdc, g_hFontUi ? g_hFontUi : GetStockObject(DEFAULT_GUI_FONT)));
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, Theme::Text);
+
+    RECT titleRc{ 48, 12, rc.right - 48, 42 };
+    wchar_t title[32]{};
+    _snwprintf_s(title, _TRUNCATE, L"%04u年 %02u月", g_calendarMonth.wYear, g_calendarMonth.wMonth);
+    if (g_hFontUiBold) SelectObject(hdc, g_hFontUiBold);
+    DrawTextW(hdc, title, -1, &titleRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, g_hFontUi ? g_hFontUi : GetStockObject(DEFAULT_GUI_FONT));
+
+    RECT prevRc{ 14, 12, 42, 40 };
+    RECT nextRc{ rc.right - 42, 12, rc.right - 14, 40 };
+    DrawRoundedRect(hdc, prevRc, Theme::NeutralButton, Theme::Border, 8);
+    DrawRoundedRect(hdc, nextRc, Theme::NeutralButton, Theme::Border, 8);
+    SetTextColor(hdc, Theme::MutedText);
+    DrawTextW(hdc, L"‹", -1, &prevRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, L"›", -1, &nextRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    static const wchar_t* week[] = { L"日", L"月", L"火", L"水", L"木", L"金", L"土" };
+    const int left = 14;
+    const int top = 56;
+    const int cellW = 40;
+    const int cellH = 32;
+    SetTextColor(hdc, Theme::MutedText);
+    for (int i = 0; i < 7; ++i) {
+        RECT wrc{ left + i * cellW, top, left + (i + 1) * cellW, top + 24 };
+        DrawTextW(hdc, week[i], -1, &wrc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    SYSTEMTIME selected = DateForPicker(g_calendarTarget);
+    SYSTEMTIME today{};
+    GetLocalTime(&today);
+    int firstDow = DayOfWeek(g_calendarMonth.wYear, g_calendarMonth.wMonth, 1);
+    int dim = DaysInMonth(g_calendarMonth.wYear, g_calendarMonth.wMonth);
+    int gridTop = top + 30;
+    for (int day = 1; day <= dim; ++day) {
+        int pos = firstDow + day - 1;
+        int row = pos / 7;
+        int col = pos % 7;
+        RECT drc{ left + col * cellW + 3, gridTop + row * cellH + 3,
+            left + (col + 1) * cellW - 3, gridTop + (row + 1) * cellH - 3 };
+        bool isSelected = selected.wYear == g_calendarMonth.wYear && selected.wMonth == g_calendarMonth.wMonth && selected.wDay == day;
+        bool isToday = today.wYear == g_calendarMonth.wYear && today.wMonth == g_calendarMonth.wMonth && today.wDay == day;
+        if (isSelected) {
+            DrawRoundedRect(hdc, drc, Theme::Primary, Theme::PrimaryHot, 8);
+            SetTextColor(hdc, RGB(255, 255, 255));
+        }
+        else if (isToday) {
+            DrawRoundedRect(hdc, drc, RGB(239, 246, 255), RGB(147, 197, 253), 8);
+            SetTextColor(hdc, Theme::SelectedText);
+        }
+        else {
+            SetTextColor(hdc, (col == 0) ? Theme::Danger : Theme::Text);
+        }
+        wchar_t d[4]{};
+        _snwprintf_s(d, _TRUNCATE, L"%d", day);
+        DrawTextW(hdc, d, -1, &drc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    if (oldFont) SelectObject(hdc, oldFont);
+}
+
+static int HitTestModernCalendarDay(int x, int y) {
+    const int left = 14;
+    const int top = 56 + 30;
+    const int cellW = 40;
+    const int cellH = 32;
+    if (x < left || x >= left + cellW * 7 || y < top) return 0;
+    int col = (x - left) / cellW;
+    int row = (y - top) / cellH;
+    if (row < 0 || row >= 6) return 0;
+    int firstDow = DayOfWeek(g_calendarMonth.wYear, g_calendarMonth.wMonth, 1);
+    int day = row * 7 + col - firstDow + 1;
+    int dim = DaysInMonth(g_calendarMonth.wYear, g_calendarMonth.wMonth);
+    return (day >= 1 && day <= dim) ? day : 0;
+}
+
+static LRESULT CALLBACK ModernCalendarPopupProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintModernCalendarPopup(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_LBUTTONDOWN:
+    {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        RECT prevRc{ 14, 12, 42, 40 };
+        RECT nextRc{ rc.right - 42, 12, rc.right - 14, 40 };
+        POINT pt{ x, y };
+        if (PtInRect(&prevRc, pt)) {
+            OffsetCalendarMonth(-1);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+        if (PtInRect(&nextRc, pt)) {
+            OffsetCalendarMonth(1);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+        int day = HitTestModernCalendarDay(x, y);
+        if (day > 0 && g_calendarTarget) {
+            SYSTEMTIME& targetDate = DateForPicker(g_calendarTarget);
+            targetDate.wYear = g_calendarMonth.wYear;
+            targetDate.wMonth = g_calendarMonth.wMonth;
+            targetDate.wDay = static_cast<WORD>(day);
+            UpdateModernDatePickerText(g_calendarTarget);
+            CloseModernCalendarPopup();
+            return 0;
+        }
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            CloseModernCalendarPopup();
+            return 0;
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) == WA_INACTIVE) {
+            CloseModernCalendarPopup();
+            return 0;
+        }
+        break;
+    case WM_DESTROY:
+        if (g_calendarPopup == hwnd) g_calendarPopup = nullptr;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+static void ShowModernCalendarPopup(HWND target) {
+    if (!target) return;
+    if (g_calendarPopup && IsWindow(g_calendarPopup) && g_calendarTarget == target) {
+        CloseModernCalendarPopup();
+        return;
+    }
+    CloseModernCalendarPopup();
+    g_calendarTarget = target;
+    g_calendarMonth = DateForPicker(target);
+    if (g_calendarMonth.wYear == 0) GetLocalTime(&g_calendarMonth);
+    g_calendarMonth.wDay = 1;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = ModernCalendarPopupProc;
+        wc.hInstance = g_hInst;
+        wc.lpszClassName = L"WorkSupportModernCalendarPopup";
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        registered = true;
+    }
+
+    RECT tr{};
+    GetWindowRect(target, &tr);
+    const int w = 308;
+    const int h = 284;
+    g_calendarPopup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"WorkSupportModernCalendarPopup", L"", WS_POPUP,
+        tr.left, tr.bottom + 6, w, h, g_hwndMain, nullptr, g_hInst, nullptr);
+    if (g_calendarPopup) {
+        ShowWindow(g_calendarPopup, SW_SHOW);
+        SetFocus(g_calendarPopup);
+    }
 }
 
 static void ApplyModernComboBox(HWND hwnd, int selectionHeight = 30, int itemHeight = 30) {
@@ -2101,17 +2358,8 @@ static void ApplyModernResultsListView(HWND hwnd) {
 
 static void ApplyModernDatePickerTheme(HWND hwnd) {
     if (!hwnd) return;
-    SetWindowTheme(hwnd, L"", L"");
-    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     SetWindowSubclass(hwnd, ModernDatePickerProc, 1, 0);
-    InvalidateRect(hwnd, nullptr, TRUE);
-    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_BACKGROUND, Theme::AppBg);
-    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_MONTHBK, Theme::CardBg);
-    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TEXT, Theme::Text);
-    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TITLEBK, Theme::Primary);
-    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TITLETEXT, RGB(255, 255, 255));
-    SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_TRAILINGTEXT, Theme::MutedText);
+    UpdateModernDatePickerText(hwnd);
 }
 
 static bool IsPrimaryButtonId(int id) {
@@ -3426,9 +3674,8 @@ static std::wstring GetModeTextForStatus()
     if (mode == 0) return L"今日";
     if (mode == 1) return L"過去 " + std::to_wstring(GetDaysFromEdit()) + L" 日";
 
-    SYSTEMTIME stFrom{}, stTo{};
-    DateTime_GetSystemtime(g_dtpFrom, &stFrom);
-    DateTime_GetSystemtime(g_dtpTo, &stTo);
+    SYSTEMTIME stFrom = g_dateFrom;
+    SYSTEMTIME stTo = g_dateTo;
 
     wchar_t a[32], b[32];
     _snwprintf_s(a, _TRUNCATE, L"%04u-%02u-%02u", stFrom.wYear, stFrom.wMonth, stFrom.wDay);
@@ -3562,10 +3809,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"作成日時");
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新OR作成");
 
-        g_dtpFrom = CreateWindowW(DATETIMEPICK_CLASSW, L"", WS_CHILD | WS_VISIBLE | DTS_SHORTDATEFORMAT,
+        g_dtpFrom = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_DTP_FROM, g_hInst, nullptr);
 
-        g_dtpTo = CreateWindowW(DATETIMEPICK_CLASSW, L"", WS_CHILD | WS_VISIBLE | DTS_SHORTDATEFORMAT,
+        g_dtpTo = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_DTP_TO, g_hInst, nullptr);
 
         if (!g_hFontUi) {
@@ -3588,15 +3835,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpTo, WM_SETFONT, (WPARAM)hUiFont, TRUE);
 
-        // 表示フォーマット（好みで変更可）
-        DateTime_SetFormat(g_dtpFrom, L"yyyy/MM/dd");
-        DateTime_SetFormat(g_dtpTo, L"yyyy/MM/dd");
-
         // デフォルトは今日
         SYSTEMTIME st{};
         GetLocalTime(&st);
-        DateTime_SetSystemtime(g_dtpFrom, GDT_VALID, &st);
-        DateTime_SetSystemtime(g_dtpTo, GDT_VALID, &st);
+        g_dateFrom = st;
+        g_dateTo = st;
+        UpdateModernDatePickerText(g_dtpFrom);
+        UpdateModernDatePickerText(g_dtpTo);
 
         // Left panel tab (Search / Excludes)
         if (!g_hFontTabLeft) {
@@ -4078,6 +4323,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
 
+        if ((id == IDC_DTP_FROM || id == IDC_DTP_TO) && code == STN_CLICKED) {
+            ShowModernCalendarPopup(reinterpret_cast<HWND>(lParam));
+            return 0;
+        }
+
         if (id == IDC_BTN_SEARCH) { StartSearch(); return 0; }
         if (id == IDC_BTN_STOP) { StopSearch();  return 0; }
 
@@ -4091,11 +4341,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         if (g_listResults && hdr->hwndFrom == ListView_GetHeader(g_listResults) && hdr->code == NM_CUSTOMDRAW) {
             return HandleResultsHeaderCustomDraw(reinterpret_cast<LPNMCUSTOMDRAW>(lParam));
-        }
-
-        if ((hdr->hwndFrom == g_dtpFrom || hdr->hwndFrom == g_dtpTo) && hdr->code == DTN_DATETIMECHANGE) {
-            InvalidateRect(hdr->hwndFrom, nullptr, TRUE);
-            return 0;
         }
 
         if (hdr->hwndFrom == g_tabLeft) {
@@ -4236,6 +4481,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_DESTROY:
+        CloseModernCalendarPopup();
         SaveSettings();
         if (g_hFontUi) { DeleteObject(g_hFontUi); g_hFontUi = nullptr; }
         if (g_hFontUiBold) { DeleteObject(g_hFontUiBold); g_hFontUiBold = nullptr; }
