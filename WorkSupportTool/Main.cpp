@@ -8,11 +8,13 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <objbase.h>
+#include <uxtheme.h>
 #include "SearchToolPage.h"
 #include "PrintToolPage.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace {
 
@@ -25,6 +27,12 @@ int g_currentTab = 0;
 HFONT g_hFontTab = nullptr;
 HBRUSH g_hBrushMainBg = nullptr;
 constexpr COLORREF kColorAppBg = RGB(245, 247, 250);
+
+void ApplyModernControlTheme(HWND hwnd) {
+    if (hwnd) {
+        SetWindowTheme(hwnd, L"Explorer", nullptr);
+    }
+}
 
 RECT GetPageRect(HWND hwnd) {
     RECT rc{};
@@ -82,8 +90,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         HFONT hFont = g_hFontTab ? g_hFontTab : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
-        g_tabMain = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        g_tabMain = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FOCUSNEVER,
             0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        ApplyModernControlTheme(g_tabMain);
         SendMessageW(g_tabMain, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         TCITEMW ti{};

@@ -14,6 +14,7 @@
 #include <objbase.h>
 #include <oleauto.h>
 #include <winspool.h>
+#include <uxtheme.h>
 
 #include <algorithm>
 #include <sstream>
@@ -28,6 +29,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "winspool.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace {
 
@@ -38,9 +40,6 @@ namespace {
         constexpr COLORREF Border = RGB(221, 227, 234);
         constexpr COLORREF Text = RGB(31, 41, 55);
         constexpr COLORREF MutedText = RGB(107, 114, 128);
-        constexpr COLORREF Primary = RGB(37, 99, 235);
-        constexpr COLORREF PrimaryHot = RGB(29, 78, 216);
-        constexpr COLORREF Disabled = RGB(156, 163, 175);
     }
 
     enum : int {
@@ -127,6 +126,12 @@ namespace {
         if (!g_hBrushEditBg) g_hBrushEditBg = CreateSolidBrush(Theme::CardBg);
     }
 
+    static void ApplyModernControlTheme(HWND hwnd) {
+        if (hwnd) {
+            SetWindowTheme(hwnd, L"Explorer", nullptr);
+        }
+    }
+
     static void DrawCard(HDC hdc, const RECT& rc) {
         HBRUSH card = CreateSolidBrush(Theme::CardBg);
         HPEN border = CreatePen(PS_SOLID, 1, Theme::Border);
@@ -154,41 +159,6 @@ namespace {
         DrawCard(hdc, filesCard);
         DrawCard(hdc, sheetsCard);
         DrawCard(hdc, logCard);
-    }
-
-    static bool DrawOwnerButton(const DRAWITEMSTRUCT* dis) {
-        if (!dis || dis->CtlType != ODT_BUTTON) return false;
-        bool disabled = (dis->itemState & ODS_DISABLED) != 0;
-        bool selected = (dis->itemState & ODS_SELECTED) != 0;
-        bool focused = (dis->itemState & ODS_FOCUS) != 0;
-        COLORREF fill = disabled ? Theme::Disabled : (selected ? Theme::PrimaryHot : Theme::Primary);
-        COLORREF borderColor = disabled ? Theme::Disabled : Theme::PrimaryHot;
-
-        HBRUSH brush = CreateSolidBrush(fill);
-        HPEN pen = CreatePen(PS_SOLID, 1, borderColor);
-        HGDIOBJ oldBrush = SelectObject(dis->hDC, brush);
-        HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
-        RECT r = dis->rcItem;
-        RoundRect(dis->hDC, r.left, r.top, r.right, r.bottom, 10, 10);
-        SelectObject(dis->hDC, oldPen);
-        SelectObject(dis->hDC, oldBrush);
-        DeleteObject(pen);
-        DeleteObject(brush);
-
-        wchar_t text[128]{};
-        GetWindowTextW(dis->hwndItem, text, 128);
-        HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
-        HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
-        SetBkMode(dis->hDC, TRANSPARENT);
-        SetTextColor(dis->hDC, RGB(255, 255, 255));
-        DrawTextW(dis->hDC, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        if (oldFont) SelectObject(dis->hDC, oldFont);
-        if (focused) {
-            RECT fr = r;
-            InflateRect(&fr, -4, -4);
-            DrawFocusRect(dis->hDC, &fr);
-        }
-        return true;
     }
 
     static std::wstring GetDefaultPrinterName()
@@ -1300,7 +1270,7 @@ namespace {
                 0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PAPER, g_hInst, nullptr);
 
             g_btnPrint = CreateWindowW(L"BUTTON", L"3. 印刷を実行",
-                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | BS_OWNERDRAW, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
 
             g_log = CreateWindowW(L"STATIC", L"4. 実行ログ",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
@@ -1328,7 +1298,10 @@ namespace {
                 g_staticPaper, g_cmbPaper, g_btnPrint, g_editLog,g_log
             };
             for (HWND h : controls) {
-                SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
+                if (h) {
+                    ApplyModernControlTheme(h);
+                    SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
+                }
             }
             SendMessageW(g_btnPrint, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
@@ -1378,10 +1351,6 @@ namespace {
             SetTextColor(hdc, Theme::Text);
             return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
         }
-
-        case WM_DRAWITEM:
-            if (DrawOwnerButton(reinterpret_cast<DRAWITEMSTRUCT*>(lParam))) return TRUE;
-            break;
 
         case WM_SIZE:
             LayoutPage(hwnd);

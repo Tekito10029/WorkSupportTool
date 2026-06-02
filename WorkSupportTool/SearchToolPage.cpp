@@ -15,6 +15,7 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <shlwapi.h>
+#include <uxtheme.h>
 
 #include <filesystem>
 #include <string>
@@ -30,6 +31,7 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace fs = std::filesystem;
 
@@ -41,8 +43,6 @@ constexpr COLORREF Border = RGB(221, 227, 234);
 constexpr COLORREF Text = RGB(31, 41, 55);
 constexpr COLORREF MutedText = RGB(107, 114, 128);
 constexpr COLORREF Primary = RGB(37, 99, 235);
-constexpr COLORREF PrimaryHot = RGB(29, 78, 216);
-constexpr COLORREF Disabled = RGB(156, 163, 175);
 constexpr COLORREF ProgressBg = RGB(229, 231, 235);
 }
 
@@ -1833,6 +1833,12 @@ static void EnsureThemeBrushes() {
     if (!g_hBrushEditBg) g_hBrushEditBg = CreateSolidBrush(Theme::CardBg);
 }
 
+static void ApplyModernControlTheme(HWND hwnd) {
+    if (hwnd) {
+        SetWindowTheme(hwnd, L"Explorer", nullptr);
+    }
+}
+
 static void DrawCard(HDC hdc, const RECT& rc) {
     HBRUSH card = CreateSolidBrush(Theme::CardBg);
     HPEN border = CreatePen(PS_SOLID, 1, Theme::Border);
@@ -1866,41 +1872,6 @@ static void PaintSearchBackground(HWND hwnd, HDC hdc) {
     RECT rightCard{ rightX - 2, 6, max(rightX + 260, winW - 6), max(80, winH - statusH - 6) };
     DrawCard(hdc, leftCard);
     DrawCard(hdc, rightCard);
-}
-
-static bool DrawOwnerButton(const DRAWITEMSTRUCT* dis) {
-    if (!dis || dis->CtlType != ODT_BUTTON) return false;
-    bool disabled = (dis->itemState & ODS_DISABLED) != 0;
-    bool selected = (dis->itemState & ODS_SELECTED) != 0;
-    bool focused = (dis->itemState & ODS_FOCUS) != 0;
-    COLORREF fill = disabled ? Theme::Disabled : (selected ? Theme::PrimaryHot : Theme::Primary);
-    COLORREF borderColor = disabled ? Theme::Disabled : Theme::PrimaryHot;
-
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, borderColor);
-    HGDIOBJ oldBrush = SelectObject(dis->hDC, brush);
-    HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
-    RECT r = dis->rcItem;
-    RoundRect(dis->hDC, r.left, r.top, r.right, r.bottom, 10, 10);
-    SelectObject(dis->hDC, oldPen);
-    SelectObject(dis->hDC, oldBrush);
-    DeleteObject(pen);
-    DeleteObject(brush);
-
-    wchar_t text[128]{};
-    GetWindowTextW(dis->hwndItem, text, 128);
-    HFONT font = reinterpret_cast<HFONT>(SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0));
-    HGDIOBJ oldFont = font ? SelectObject(dis->hDC, font) : nullptr;
-    SetBkMode(dis->hDC, TRANSPARENT);
-    SetTextColor(dis->hDC, RGB(255, 255, 255));
-    DrawTextW(dis->hDC, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (oldFont) SelectObject(dis->hDC, oldFont);
-    if (focused) {
-        RECT fr = r;
-        InflateRect(&fr, -4, -4);
-        DrawFocusRect(dis->hDC, &fr);
-    }
-    return true;
 }
 
 static void DoLayout(HWND hwnd); // forward
@@ -3046,8 +3017,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                 DEFAULT_PITCH | FF_DONTCARE, L"Yu Gothic UI");
         }
-        g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        g_tabLeft = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FOCUSNEVER,
             0, 0, 0, 0, hwnd, (HMENU)IDC_TAB_LEFT, g_hInst, nullptr);
+        ApplyModernControlTheme(g_tabLeft);
         SendMessageW(g_tabLeft, WM_SETFONT, (WPARAM)(g_hFontTabLeft ? g_hFontTabLeft : hUiFont), TRUE);
         {
             TCITEMW ti{};
@@ -3109,7 +3081,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkXltm = CreateWindowW(L"BUTTON", L".xltm", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_XLTM, g_hInst, nullptr);
 
         // Actions
-        g_btnSearch = CreateWindowW(L"BUTTON", L"検索を開始", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
+        g_btnSearch = CreateWindowW(L"BUTTON", L"検索を開始", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
         g_btnStop = CreateWindowW(L"BUTTON", L"停止", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_STOP, g_hInst, nullptr);
         g_btnExportCsv = CreateWindowW(L"BUTTON", L"CSV出力", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT_CSV, g_hInst, nullptr);
 
@@ -3149,7 +3121,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_staticProgress, g_editFilter, g_listResults, g_status
         };
         for (HWND h : controls) {
-            if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+            if (h) {
+                ApplyModernControlTheme(h);
+                SendMessageW(h, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+            }
         }
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
@@ -3236,10 +3211,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SetTextColor(hdc, Theme::Text);
         return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
     }
-
-    case WM_DRAWITEM:
-        if (DrawOwnerButton(reinterpret_cast<DRAWITEMSTRUCT*>(lParam))) return TRUE;
-        break;
 
     case WM_COMMAND:
     {
