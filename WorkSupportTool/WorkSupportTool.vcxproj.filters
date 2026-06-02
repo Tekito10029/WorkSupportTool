@@ -36,7 +36,7 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <Xml Include="app.manifest.xml">
+    <Xml Include="app.manifest">
       <Filter>リソース ファイル</Filter>
     </Xml>
   </ItemGroup>
