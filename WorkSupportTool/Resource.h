@@ -1,4 +1,4 @@
-﻿//{{NO_DEPENDENCIES}}
+﻿//{{依存関係なし}}
 // Microsoft Visual C++ で生成されたインクルード ファイルです。
 // 次で使用: WorkSupportTool.rc
 

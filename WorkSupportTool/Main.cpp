@@ -220,7 +220,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-} // namespace
+} // 名前空間終了
 
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     g_hInst = hInstance;

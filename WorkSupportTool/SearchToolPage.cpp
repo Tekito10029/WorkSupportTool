@@ -8,7 +8,7 @@
 
 #include "SearchToolPage.h"
 #include <windows.h>
-#include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM
+#include <windowsx.h>   // マウス座標取得用マクロ
 #include <commctrl.h>
 #include <shobjidl.h>
 #include <ShlObj.h>
@@ -63,11 +63,11 @@ constexpr COLORREF ProgressBg = RGB(229, 231, 235);
 }
 
 
-// -------------------- IDs --------------------
+// -------------------- コントロールID --------------------
 enum : int {
     IDC_BTN_BROWSE_ROOT = 102,
 
-    // Roots list (NEW - intuitive multi-folder)
+    // ルート一覧（複数フォルダーを直感的に扱う）
     IDC_LIST_ROOTS,
     IDC_BTN_ROOT_ADD,
     IDC_BTN_ROOT_REMOVE,
@@ -82,11 +82,11 @@ enum : int {
     IDC_STATIC_DAYS,
     IDC_EDIT_DAYS,
 
-    // NEW: time base
+    // 日時基準
     IDC_STATIC_TIMEBASE,
     IDC_CMB_TIMEBASE,
 
-    // extensions
+    // 拡張子
     IDC_GRP_EXT,
     IDC_CHK_XLS,
     IDC_CHK_XLSX,
@@ -95,7 +95,7 @@ enum : int {
     IDC_CHK_XLTX,
     IDC_CHK_XLTM,
 
-    // folder excludes
+    // フォルダー除外
     IDC_STATIC_EXCL_FOLDER,
     IDC_CHK_ENABLE_FOLDER_EXCL,
     IDC_LIST_EXCLUDES,
@@ -111,7 +111,7 @@ enum : int {
     IDC_BTN_ADD_PATTERN,
     IDC_BTN_UPDATE_PATTERN,
 
-    // file name excludes
+    // ファイル名除外
     IDC_STATIC_EXCL_NAME,
     IDC_CHK_ENABLE_NAME_EXCL,
     IDC_CHK_NAME_INCLUDE_EXT,
@@ -123,37 +123,37 @@ enum : int {
     IDC_BTN_FNAME_DOWN,
     IDC_LIST_FNAME,
 
-    // file-name exclude load/save
+    // ファイル名除外の読み込み/保存
     IDC_BTN_LOAD_FNAME_EXCL,
     IDC_BTN_SAVE_FNAME_EXCL,
 
-    // actions
+    // 操作
     IDC_BTN_SEARCH,
     IDC_BTN_STOP,
     IDC_BTN_EXPORT_CSV,
 
-    // view
+    // 表示
     IDC_PROGRESS,
     IDC_STATIC_PROGRESS,
     IDC_LIST_RESULTS,
     IDC_STATUS,
 
-    // result filter (NEW)
+    // 結果フィルター
     IDC_STATIC_FILTER,
     IDC_EDIT_FILTER,
 
-    // calendar range (NEW)
+    // カレンダー範囲
     IDC_STATIC_FROM,
     IDC_DTP_FROM,
     IDC_STATIC_TO,
     IDC_DTP_TO,
 
-    // Left panel tab (Search / Excludes)
+    // 左ペインのタブ（検索 / 除外）
     IDC_TAB_LEFT,
 
 };
 
-// Popup menu commands (not control IDs)
+// ポップアップメニュー用コマンド（コントロールIDではない）
 enum : int {
     CMD_ROOT_ADD = 40001,
     CMD_ROOT_REMOVE,
@@ -182,11 +182,11 @@ static const UINT WM_APP_FINISHED = WM_APP + 3;
 static const UINT WM_APP_THREADERR = WM_APP + 4;
 static const UINT WM_APP_TOTAL = WM_APP + 5;
 
-static const UINT WM_APP_SCANPATH = WM_APP + 6; // NEW: show current scanning folder
+static const UINT WM_APP_SCANPATH = WM_APP + 6; // 現在走査中のフォルダーを表示する
 
 static void CloseModernCalendarPopup();
 
-// -------------------- Models --------------------
+// -------------------- データモデル --------------------
 struct Hit {
     std::wstring timeText;        // 表示用（更新/作成どちらでも）
     unsigned long long sizeKB = 0;
@@ -218,7 +218,7 @@ struct SearchParams {
     TimeBase timeBase = TimeBase::LastWrite;
 };
 
-// -------------------- Globals --------------------
+// -------------------- グローバル変数 --------------------
 static HINSTANCE g_hInst = nullptr;
 static HWND g_hwndMain = nullptr;
 
@@ -241,7 +241,7 @@ static HWND g_staticExclFolder = nullptr;
 static HWND g_staticExclPattern = nullptr;
 static HWND g_staticExclName = nullptr;
 
-static HWND g_btnBrowseRoot = nullptr; // repurposed as Add...
+static HWND g_btnBrowseRoot = nullptr; // 追加ボタンとして再利用
 static HWND g_listRoots = nullptr;
 static HWND g_btnRootRemove = nullptr;
 static HWND g_btnRootUp = nullptr;
@@ -261,7 +261,7 @@ static HWND g_chkXlsb = nullptr;
 static HWND g_chkXltx = nullptr;
 static HWND g_chkXltm = nullptr;
 
-// folder exclude
+// フォルダー除外
 static HWND g_chkEnableFolderExcl = nullptr;
 static HWND g_listExcludes = nullptr;
 static HWND g_btnAddExclFolder = nullptr;
@@ -276,7 +276,7 @@ static HWND g_btnAddPattern = nullptr;
 // 更新ボタンは廃止（編集→Enter/フォーカスアウトで即反映）
 static WNDPROC g_oldExclEditProc = nullptr;
 
-// name exclude
+// 名前除外
 static HWND g_chkEnableNameExcl = nullptr;
 static HWND g_chkNameIncludeExt = nullptr;
 static HWND g_editFNamePattern = nullptr;
@@ -290,7 +290,7 @@ static HWND g_listFName = nullptr;
 static HWND g_btnLoadFNameExcl = nullptr;
 static HWND g_btnSaveFNameExcl = nullptr;
 
-// actions/view
+// 操作/表示
 static HWND g_btnSearch = nullptr;
 static HWND g_btnStop = nullptr;
 static HWND g_btnExportCsv = nullptr;
@@ -299,7 +299,7 @@ static HWND g_staticProgress = nullptr;
 static HWND g_listResults = nullptr;
 static HWND g_status = nullptr;
 
-// result filter (NEW)
+// 結果フィルター
 static HWND g_staticFilter = nullptr;
 static HWND g_editFilter = nullptr;
 static int g_visibleCount = 0;
@@ -314,13 +314,13 @@ static HWND g_calendarPopup = nullptr;
 static HWND g_calendarTarget = nullptr;
 static SYSTEMTIME g_calendarMonth{};
 
-// advanced toggle
+// 詳細表示切り替え
 
-// advanced frames (visual grouping)
+// 詳細枠（視覚的なグループ化）
 static HWND g_frameFolderExcl = nullptr;
 static HWND g_frameNameExcl = nullptr;
 
-// runtime
+// 実行時状態
 static std::vector<ExcludeRule> g_excludeRules;
 static std::vector<std::wstring> g_fileNamePatterns;
 static std::vector<std::wstring> g_fileNameWild;
@@ -330,7 +330,7 @@ static std::vector<std::unique_ptr<Hit>> g_results;
 static std::vector<size_t> g_visibleResultIndices;
 
 static std::wstring g_iniPath;
-static std::wstring g_currentScanDir; // NEW: scanning folder
+static std::wstring g_currentScanDir; // 走査中フォルダー
 static std::wstring g_lastExcludeFile;
 static std::wstring g_lastCsvFile;
 static std::wstring g_lastNameExcludeFile;
@@ -340,11 +340,11 @@ static std::atomic<bool> g_stopRequested{ false };
 static std::atomic<bool> g_searching{ false };
 static HANDLE g_hThread = nullptr;
 
-// sorting: 0=日時,1=KB,2=ファイル名,3=パス
+// 並べ替え: 0=日時,1=KB,2=ファイル名,3=パス
 static int g_sortCol = 0;
 static bool g_sortAsc = false;
 
-// -------------------- Helpers --------------------
+// -------------------- 補助関数 --------------------
 static std::wstring ToLower(std::wstring s) {
     std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) { return (wchar_t)towlower(c); });
     return s;
@@ -364,21 +364,21 @@ static std::wstring EllipsizePathRight(const std::wstring& s, size_t maxChars)
     if (maxChars <= 3) return s.substr(0, maxChars);
     return L"..." + s.substr(s.size() - (maxChars - 3));
 }
-// ---- Forward declarations (for multi-root helpers) ----
+// ---- 前方宣言（複数ルート補助関数用） ----
 static std::wstring ToLower(std::wstring s);
 static std::wstring Trim(const std::wstring& s);
 static std::wstring GetWindowTextWStr(HWND h);
 static void SetWindowTextWStr(HWND h, const std::wstring& s);
 static fs::path NormalizePath(const fs::path& p);
 
-// ---- Forward declarations (used before definitions) ----
-// Needed because some handlers/commit functions appear before these are defined.
+// ---- 前方宣言（定義より前で使用する関数） ----
+// 一部のハンドラー/確定処理が定義より前にあるため必要
 static void RefreshFileNameListBox();
 static void RebuildFileNameExcludeCache();
 static void SaveSettings();
 // -------------------------------------------------------
 
-// ---- Roots list helpers (intuitive multi-folder) ----
+// ---- ルート一覧補助関数（複数フォルダーを直感的に扱う） ----
 static std::vector<std::wstring> GetRootsFromListBox()
 {
     std::vector<std::wstring> out;
@@ -521,10 +521,10 @@ static void MoveRootItem(int from, int to)
     SendMessageW(g_listRoots, LB_GETTEXT, (WPARAM)from, (LPARAM)buf);
     std::wstring item = buf;
 
-    // delete old
+    // 元の項目を削除
     SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)from, 0);
 
-    // re-insert
+    // 移動先へ再挿入
     int idx = (int)SendMessageW(g_listRoots, LB_INSERTSTRING, (WPARAM)to, (LPARAM)item.c_str());
     SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
 }
@@ -533,7 +533,7 @@ static void MoveRootItem(int from, int to)
 
 static std::vector<std::wstring> SplitRootsText(const std::wstring& text)
 {
-    // Accept: ';' and '|' separators (keep UI single-line). Also accept newlines if pasted.
+    // 区切り文字は ; と | を受け付ける（UIは1行のまま）。貼り付け時の改行も許可する
     std::vector<std::wstring> out;
     std::wstring cur;
     auto flush = [&]() {
@@ -548,7 +548,7 @@ static std::vector<std::wstring> SplitRootsText(const std::wstring& text)
     }
     flush();
 
-    // Dedup (case-insensitive)
+    // 大文字小文字を区別せず重複排除
     std::vector<std::wstring> uniq;
     for (auto& s : out) {
         auto low = ToLower(Trim(s));
@@ -612,7 +612,7 @@ static bool HasPathPrefixLow(const std::wstring& pathLow, const std::wstring& pr
     return IsPathSeparator(pathLow[prefixLow.size()]);
 }
 
-// ---- time ----
+// ---- 日時処理 ----
 static std::wstring FormatLocalTime(const std::chrono::system_clock::time_point& tp) {
     std::time_t tt = std::chrono::system_clock::to_time_t(tp);
     std::tm local{};
@@ -638,7 +638,7 @@ static void GetLocalDayRangePastNDays(int nDays,
     std::tm startTm = localNow;
     startTm.tm_hour = 0; startTm.tm_min = 0; startTm.tm_sec = 0;
 
-    std::time_t today0 = mktime(&startTm); // local midnight -> time_t(UTC基準)
+    std::time_t today0 = mktime(&startTm); // ローカル日付の0時を time_t（UTC基準）へ変換
     std::time_t startT = today0 - (std::time_t)(nDays - 1) * 24 * 60 * 60;
     std::time_t endT = today0 + 24 * 60 * 60;
 
@@ -673,7 +673,7 @@ static std::chrono::system_clock::time_point LocalMidnightFromDate(const SYSTEMT
     tm.tm_mon = (int)st.wMonth - 1;
     tm.tm_mday = (int)st.wDay;
     tm.tm_hour = 0; tm.tm_min = 0; tm.tm_sec = 0;
-    std::time_t t = mktime(&tm); // local time
+    std::time_t t = mktime(&tm); // ローカル時刻
     return std::chrono::system_clock::from_time_t(t);
 }
 
@@ -690,7 +690,7 @@ static void GetActiveDateRange(std::chrono::system_clock::time_point& outS,
         return;
     }
 
-    // mode == 2: 期間指定（カレンダー）
+    // mode が 2 の場合: 期間指定（カレンダー）
     SYSTEMTIME stFrom = g_dateFrom;
     SYSTEMTIME stTo = g_dateTo;
     if (stFrom.wYear == 0 || stTo.wYear == 0) {
@@ -711,14 +711,14 @@ static void GetActiveDateRange(std::chrono::system_clock::time_point& outS,
     outE = e;
 }
 
-// -------------------- Progress helpers --------------------
+// -------------------- 進捗表示補助関数 --------------------
 static void Progress_SetMarquee(HWND hProg, bool on) {
     if (!hProg) return;
 
     LONG_PTR style = GetWindowLongPtrW(hProg, GWL_STYLE);
 
     if (on) {
-        // Ensure PBS_MARQUEE is set
+        // PBS_MARQUEE が設定されていることを保証する
         if (!(style & PBS_MARQUEE)) {
             SetWindowLongPtrW(hProg, GWL_STYLE, style | PBS_MARQUEE);
             SetWindowPos(hProg, nullptr, 0, 0, 0, 0,
@@ -727,10 +727,10 @@ static void Progress_SetMarquee(HWND hProg, bool on) {
         SendMessageW(hProg, PBM_SETMARQUEE, TRUE, 30);
     }
     else {
-        // Stop marquee first
+        // 先にマーキー表示を停止する
         SendMessageW(hProg, PBM_SETMARQUEE, FALSE, 0);
 
-        // Remove PBS_MARQUEE so that PBM_SETPOS clears the bar visually
+        // PBM_SETPOSでバーが空表示になるよう PBS_MARQUEE を外す
         style = GetWindowLongPtrW(hProg, GWL_STYLE);
         if (style & PBS_MARQUEE) {
             SetWindowLongPtrW(hProg, GWL_STYLE, style & ~PBS_MARQUEE);
@@ -741,25 +741,25 @@ static void Progress_SetMarquee(HWND hProg, bool on) {
         SendMessageW(hProg, PBM_SETRANGE32, 0, 100);
         SendMessageW(hProg, PBM_SETPOS, 0, 0);
 
-        // Force repaint to reflect the empty state
+        // 空状態を反映するため強制的に再描画する
         InvalidateRect(hProg, nullptr, TRUE);
         UpdateWindow(hProg);
     }
 }
 
-// ---- NEW: FILETIME -> system_clock ----
+// ---- FILETIME から system_clock への変換 ----
 static std::chrono::system_clock::time_point FileTimeToSysClock(const FILETIME& ft)
 {
     ULARGE_INTEGER uli;
     uli.LowPart = ft.dwLowDateTime;
     uli.HighPart = ft.dwHighDateTime;
 
-    constexpr int64_t WINDOWS_TICK_PER_SEC = 10'000'000LL;     // 100ns * 10,000,000 = 1 sec
-    constexpr int64_t SEC_TO_UNIX_EPOCH = 11'644'473'600LL; // 1601-01-01 -> 1970-01-01 seconds
+    constexpr int64_t WINDOWS_TICK_PER_SEC = 10'000'000LL;     // 100ナノ秒 * 10,000,000 = 1秒
+    constexpr int64_t SEC_TO_UNIX_EPOCH = 11'644'473'600LL; // 1601-01-01 から 1970-01-01 までの秒数
 
     int64_t total100ns = (int64_t)uli.QuadPart;
     int64_t sec = total100ns / WINDOWS_TICK_PER_SEC;
-    int64_t rem = total100ns % WINDOWS_TICK_PER_SEC; // 100ns ticks
+    int64_t rem = total100ns % WINDOWS_TICK_PER_SEC; // 100ナノ秒単位の余り
 
     // ここがポイント：system_clock::duration に明示キャストして精度落ちを許可
     auto dur = std::chrono::seconds(sec - SEC_TO_UNIX_EPOCH)
@@ -784,7 +784,7 @@ static std::wstring TimeBaseText(TimeBase tb) {
     return L"更新日時";
 }
 
-// LastWrite/Creation/Either 取得
+// 更新日時/作成日時/いずれかを取得
 static bool GetFileTimesSysClock(const std::wstring& path,
     std::chrono::system_clock::time_point& outWrite,
     std::chrono::system_clock::time_point& outCreate)
@@ -796,7 +796,7 @@ static bool GetFileTimesSysClock(const std::wstring& path,
     return true;
 }
 
-// ---- extensions ----
+// ---- 拡張子 ----
 static bool ExtChecked(const std::wstring& extLower) {
     if (extLower == L".xls")  return IsChecked(g_chkXls);
     if (extLower == L".xlsx") return IsChecked(g_chkXlsx);
@@ -818,7 +818,7 @@ static bool IsTargetExcelFile(const fs::path& p) {
     return false;
 }
 
-// -------------------- UTF-8 helpers --------------------
+// -------------------- UTF-8 補助関数 --------------------
 static std::string WideToUtf8(const std::wstring& w) {
     if (w.empty()) return {};
     int sz = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
@@ -854,7 +854,7 @@ static bool WriteTextFileUtf8Bom(const std::wstring& path, const std::wstring& t
     return true;
 }
 
-// -------------------- Dialog helpers --------------------
+// -------------------- ダイアログ補助関数 --------------------
 static bool PickFolder(HWND owner, std::wstring& outPath) {
     outPath.clear();
     IFileDialog* pfd = nullptr;
@@ -899,7 +899,7 @@ static bool PickOpenFile(HWND owner, const wchar_t* filter, std::wstring& inoutP
         return true;
     }
 
-    DWORD err = CommDlgExtendedError(); // 0 = user canceled
+    DWORD err = CommDlgExtendedError(); // 0 はユーザーキャンセル
     if (err != 0) {
         wchar_t msg[128];
         wsprintfW(msg, L"GetOpenFileNameW failed: 0x%08X", err);
@@ -926,7 +926,7 @@ static bool PickSaveFile(HWND owner, const wchar_t* filter, const wchar_t* defEx
         return true;
     }
 
-    DWORD err = CommDlgExtendedError(); // 0 = user canceled
+    DWORD err = CommDlgExtendedError(); // 0 はユーザーキャンセル
     if (err != 0) {
         wchar_t msg[128];
         wsprintfW(msg, L"GetSaveFileNameW failed: 0x%08X", err);
@@ -935,7 +935,7 @@ static bool PickSaveFile(HWND owner, const wchar_t* filter, const wchar_t* defEx
     return false;
 }
 
-// -------------------- Folder excludes --------------------
+// -------------------- フォルダー除外 --------------------
 static std::wstring FolderRuleToDisplay(const ExcludeRule& r) {
     switch (r.type) {
     case ExcludeType::DirPrefix: return L"[DIR] " + r.dirNorm.wstring();
@@ -1092,7 +1092,7 @@ static bool SaveExcludesToFile(const std::wstring& filePath) {
     return WriteTextFileUtf8Bom(filePath, out);
 }
 
-// -------------------- Excludes: inline update helpers --------------------
+// -------------------- 除外設定: インライン更新補助関数 --------------------
 static void UpdateExcludeDirPrefixAt(int index, const std::wstring& newPath)
 {
     if (index < 0 || index >= (int)g_excludeRules.size()) return;
@@ -1103,7 +1103,7 @@ static void UpdateExcludeDirPrefixAt(int index, const std::wstring& newPath)
     auto norm = NormalizePath(p);
     auto low = ToLower(norm.wstring());
 
-    // 他のDIR除外と重複しないか確認する
+    // 他のフォルダー除外と重複しないか確認する
     for (int i = 0; i < (int)g_excludeRules.size(); ++i) {
         if (i == index) continue;
         const auto& r = g_excludeRules[(size_t)i];
@@ -1218,7 +1218,7 @@ static LRESULT CALLBACK FNameEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 {
     if (msg == WM_KEYDOWN) {
         // 文字入力を始めたら、一覧の選択を外して「新規追加モード」にする
-        if ((wParam >= 0x30 && wParam <= 0x5A) ||   // 0-9, A-Z
+        if ((wParam >= 0x30 && wParam <= 0x5A) ||   // 0-9、A-Z
             (wParam >= VK_NUMPAD0 && wParam <= VK_DIVIDE) ||
             wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
             wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
@@ -1255,7 +1255,7 @@ static LRESULT CALLBACK FNameEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 }
 
 
-// -------------------- File-name excludes --------------------
+// -------------------- ファイル名除外 --------------------
 static void RebuildFileNameExcludeCache() {
     g_fileNameWild.clear();
     g_fileNameSubLow.clear();
@@ -1307,7 +1307,7 @@ static bool LoadFileNameExcludesFromFile(const std::wstring& filePath) {
         loaded.push_back(line);
     }
 
-    // normalize & unique (case-insensitive)
+    // 正規化して大文字小文字を区別せず一意化
     auto key = [](const std::wstring& s) { return ToLower(Trim(s)); };
     std::sort(loaded.begin(), loaded.end(), [&](const std::wstring& a, const std::wstring& b) { return key(a) < key(b); });
     loaded.erase(std::unique(loaded.begin(), loaded.end(), [&](const std::wstring& a, const std::wstring& b) { return key(a) == key(b); }), loaded.end());
@@ -1331,7 +1331,7 @@ static bool SaveFileNameExcludesToFile(const std::wstring& filePath) {
     return WriteTextFileUtf8Bom(filePath, out);
 }
 
-// -------------------- Result filter (NEW) --------------------
+// -------------------- 結果フィルター --------------------
 static std::wstring GetFilterLow() {
     if (!g_editFilter) return L"";
     return ToLower(Trim(GetWindowTextWStr(g_editFilter)));
@@ -1351,7 +1351,7 @@ static void UpdateExportButtonEnabled() {
     EnableWindow(g_btnExportCsv, (g_visibleCount > 0) ? TRUE : FALSE);
 }
 
-// -------------------- CSV export --------------------
+// -------------------- CSV出力 --------------------
 static std::wstring CsvEscape(const std::wstring& s) {
     bool need = false;
     for (wchar_t c : s) {
@@ -1386,7 +1386,7 @@ static bool ExportResultsCsv(const std::wstring& filePath, TimeBase tb) {
     return WriteTextFileUtf8Bom(filePath, out);
 }
 
-// -------------------- ListView --------------------
+// -------------------- リストビュー --------------------
 static void InitListViewColumns(HWND lv) {
     ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP);
 
@@ -1488,7 +1488,7 @@ static void SortResults(int col, bool asc) {
         const Hit& B = *b;
         int r = 0;
         if (col == 0) {
-            // YYYY-MM-DD HH:MM:SS なので文字列比較でOK
+            // YYYY-MM-DD HH:MM:SS 形式なので文字列比較で問題ない
             r = (A.timeText < B.timeText) ? -1 : (A.timeText > B.timeText ? 1 : 0);
         }
         else if (col == 1) {
@@ -1508,7 +1508,7 @@ static void SortResults(int col, bool asc) {
     RebuildListViewFromResults();
 }
 
-// -------------------- INI --------------------
+// -------------------- INI設定 --------------------
 // settings.ini を UTF-16LE(BOM) で確実に作成し、必要なら旧(サーバー)INIからローカルへ移行する
 static bool ContainsQuestionMark(const std::wstring& s) {
     return s.find(L'?') != std::wstring::npos;
@@ -1519,11 +1519,11 @@ static void CreateUtf16LeBomFile(const std::wstring& path) {
         fs::path p(path);
         if (!p.parent_path().empty()) fs::create_directories(p.parent_path());
         std::ofstream f(p, std::ios::binary | std::ios::trunc);
-        const unsigned char bom[] = { 0xFF, 0xFE }; // UTF-16LE
+        const unsigned char bom[] = { 0xFF, 0xFE }; // UTF-16LE BOM
         f.write(reinterpret_cast<const char*>(bom), 2);
     }
     catch (...) {
-        // ignore
+        // 失敗しても処理を継続する
     }
 }
 
@@ -1574,7 +1574,7 @@ static std::wstring GetLocalAppDataExcelTodayDir() {
 }
 
 static void InitPaths() {
-    const std::wstring exeDir = GetExeDir(); // サーバー上でもOK
+    const std::wstring exeDir = GetExeDir(); // サーバー上でも利用可能
     const std::wstring localDir = GetLocalAppDataExcelTodayDir();
 
     if (!localDir.empty()) {
@@ -1596,9 +1596,9 @@ static void EnsureUnicodeIniWithMigration() {
     if (g_iniPath.empty()) return;
 
     const std::wstring exeDir = GetExeDir();
-    const std::wstring legacyIni = exeDir + L"\\settings.ini"; // 旧: exeフォルダ（読むだけ）
+    const std::wstring legacyIni = exeDir + L"\\settings.ini"; // 旧設定: 実行ファイルフォルダー（読み取りのみ）
 
-    // 1) ローカルINIが無ければ Unicode(BOM) で作る
+    // 1) ローカルINIが無ければ Unicode（BOM付き）で作る
     if (!fs::exists(fs::path(g_iniPath))) {
         CreateUtf16LeBomFile(g_iniPath);
 
@@ -1625,7 +1625,7 @@ static void EnsureUnicodeIniWithMigration() {
                 WritePrivateProfileStringW(L"Main", L"TimeBase", b, g_iniPath.c_str());
             }
 
-            // Ext
+            // 拡張子設定
             const wchar_t* extKeys[] = { L"xls", L"xlsx", L"xlsm", L"xlsb", L"xltx", L"xltm" };
             for (auto k : extKeys) {
                 wchar_t b[16];
@@ -1633,7 +1633,7 @@ static void EnsureUnicodeIniWithMigration() {
                 WritePrivateProfileStringW(L"Ext", k, b, g_iniPath.c_str());
             }
 
-            // Filter
+            // フィルター
             const wchar_t* fKeys[] = { L"EnableFolderExclude", L"EnableNameExclude", L"NameIncludeExt" };
             for (auto k : fKeys) {
                 wchar_t b[16];
@@ -1641,7 +1641,7 @@ static void EnsureUnicodeIniWithMigration() {
                 WritePrivateProfileStringW(L"Filter", k, b, g_iniPath.c_str());
             }
 
-            // View
+            // 表示設定
             {
                 wchar_t b[16];
                 _snwprintf_s(b, _TRUNCATE, L"%d", IniReadIntFrom(legacyIni, L"View", L"SortCol", 0));
@@ -1650,7 +1650,7 @@ static void EnsureUnicodeIniWithMigration() {
                 WritePrivateProfileStringW(L"View", L"SortAsc", b, g_iniPath.c_str());
             }
 
-            // NameFilter
+            // ファイル名フィルター設定
             int n = IniReadIntFrom(legacyIni, L"NameFilter", L"Count", 0);
             if (n < 0) n = 0;
             if (n > 200) n = 200;
@@ -1714,7 +1714,7 @@ static int IniReadInt(const wchar_t* sec, const wchar_t* key, int defv) {
     return GetPrivateProfileIntW(sec, key, defv, g_iniPath.c_str());
 }
 
-// -------------------- UI enable/disable --------------------
+// -------------------- UIの有効/無効切り替え --------------------
 static void UpdateUiEnableStates() {
     bool folderOn = IsChecked(g_chkEnableFolderExcl);
     EnableWindow(g_listExcludes, folderOn);
@@ -2641,15 +2641,15 @@ static void PaintSearchBackground(HWND hwnd, HDC hdc) {
     DrawCard(hdc, rightCard);
 }
 
-static void DoLayout(HWND hwnd); // forward
+static void DoLayout(HWND hwnd); // 前方宣言
 
-// -------------------- Left tab (Search / Excludes) --------------------
+// -------------------- 左タブ（検索 / 除外） --------------------
 static void ApplyLeftTabVisibility() {
     bool isSearch = (g_leftTab == 0);
     int swSearch = isSearch ? SW_SHOW : SW_HIDE;
     int swExcl = isSearch ? SW_HIDE : SW_SHOW;
 
-    // Search tab controls
+    // 検索タブのコントロール
     ShowWindow(g_staticRoot, swSearch);
     ShowWindow(g_listRoots, swSearch);
     ShowWindow(g_btnBrowseRoot, swSearch);
@@ -2681,7 +2681,7 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_chkXltx, swSearch);
     ShowWindow(g_chkXltm, swSearch);
 
-    // Exclude tab controls
+    // 除外タブのコントロール
     ShowWindow(g_frameFolderExcl, swExcl);
     ShowWindow(g_frameNameExcl, swExcl);
 
@@ -2708,7 +2708,7 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_btnLoadFNameExcl, swExcl);
     ShowWindow(g_btnSaveFNameExcl, swExcl);
 
-    // Keep enable/disable consistent when visible.
+    // 表示中のコントロールの有効/無効状態を整合させる
     UpdateUiEnableStates();
 }
 
@@ -2726,7 +2726,7 @@ static void SetLeftTab(int tab, bool saveIni = true) {
     }
 }
 
-// -------------------- Settings load/save --------------------
+// -------------------- 設定の読み込み/保存 --------------------
 static void LoadSettings() {
     std::vector<RootEntry> entries;
 
@@ -2932,7 +2932,7 @@ static void SetSearchingUi(bool searching) {
     }
     if (!searching) g_totalScanFiles = 0;
 }
-// -------------------- Layout --------------------
+// -------------------- レイアウト --------------------
 
 static void DoLayout(HWND hwnd) {
     RECT rc{};
@@ -2949,34 +2949,34 @@ static void DoLayout(HWND hwnd) {
     int winW = rc.right - rc.left;
     int winH = rc.bottom - rc.top;
 
-    // Keep controls within client area above the status bar.
+    // ステータスバーより上のクライアント領域内にコントロールを収める
     const int statusH = 22;
     const int maxBottom = (winH - statusH - padding);
 
-    // Two-column layout: left = controls, right = results list
+    // 2列レイアウト: 左側は操作欄、右側は結果一覧
     int minRightW = 440;
     int leftW = 560;
     if (winW < leftW + minRightW + padding * 3) {
         leftW = max(320, winW - (minRightW + padding * 3));
     }
 
-    // Virtual left panel width (includes padding margins)
+    // 仮想的な左ペイン幅（余白を含む）
     int w = leftW + padding * 2;
     int rightX = w + padding;
     int rightW = winW - rightX - padding;
     if (rightW < 260) rightW = 260;
 
-    int leftBoundary = rightX - padding; // max x for left panel content
+    int leftBoundary = rightX - padding; // 左ペイン内容の最大X座標
 
-    // ---- Left panel common (tab) ----
+    // ---- 左ペイン共通（タブ） ----
     int y = padding;
     const int tabH = 30;
     MoveWindow(g_tabLeft, padding, y, max(160, w - padding * 2), tabH, TRUE);
     y += tabH + gap;
 
-    // ---- Left panel: Search tab ----
+    // ---- 左ペイン: 検索タブ ----
     if (g_leftTab == 0) {
-        // Root header
+        // ルート見出し
         int labelW = 82;
         int hintW = w - (padding * 2 + labelW);
         hintW = max(80, hintW);
@@ -2984,7 +2984,7 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_staticRootsHint, padding + labelW, y + 4, hintW, labelH, TRUE);
         y += rowH + gap;
 
-        // Roots list + buttons
+        // ルート一覧とボタン
         int rootListH = max(150, rowH * 5 + gap * 4);
         int btnColW = 112;
         int rootListX = padding;
@@ -3000,7 +3000,7 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_btnRootToggle, btnX, y + (rowH + gap) * 4, btnColW, rowH, TRUE);
         y += rootListH + gap;
 
-        // Calendar row
+        // カレンダー行
         int calLabelW = 56;
         int calW = 150;
         int calGap = 12;
@@ -3014,7 +3014,7 @@ static void DoLayout(HWND hwnd) {
 
         y += rowH + padding;
 
-        // Mode / Days / TimeBase (responsive)
+        // モード / 日数 / 日時基準（レスポンシブ配置）
         int modeLabelW = 82;
         int modeComboW = 214;
         int daysLabelW = 82;
@@ -3035,7 +3035,7 @@ static void DoLayout(HWND hwnd) {
 
         int need = tbLabelW + tbComboW;
         if (x + need > leftMaxX) {
-            // wrap
+            // 折り返し
             y += rowH + gap;
             x = padding;
         }
@@ -3044,12 +3044,12 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_staticTimeBase, x, y + 4, tbLabelW, labelH, TRUE);
         MoveWindow(g_cmbTimeBase, x + tbLabelW, y, tbComboW, comboDropH, TRUE);
         y += rowH + padding;
-        // Name-exclude option (判定に拡張子を含める)
+        // ファイル名除外オプション（判定に拡張子を含める）
         // これは「ファイル名除外」で拡張子を含めて比較するかどうかの設定。
         MoveWindow(g_chkNameIncludeExt, padding, y, max(220, w - padding * 2), rowH, TRUE);
         y += rowH + gap;
 
-        // Extensions group (kept in Search tab)
+        // 拡張子グループ（検索タブ内に保持）
         int extH = 88;
         int extW = w - padding * 2;
         HWND hExtGrp = GetDlgItem(hwnd, IDC_GRP_EXT);
@@ -3070,9 +3070,9 @@ static void DoLayout(HWND hwnd) {
 
         y += extH + gap;
     }
-    // ---- Left panel: Excludes tab ----
+    // ---- 左ペイン: 除外タブ ----
     else {
-        // Fit advanced UI within the minimum window size by shrinking list heights when needed.
+        // 必要に応じて一覧の高さを縮め、最小ウィンドウサイズ内に詳細UIを収める
         int remainingH = maxBottom - y;
         const int fixedMin = 270;
         const int minFolderListH = 80;
@@ -3086,21 +3086,21 @@ static void DoLayout(HWND hwnd) {
         const int gbTitleH = 24;
         const int gbBottomPad = 12;
 
-        // -------- Folder exclude group --------
+        // -------- フォルダー除外グループ --------
         int folderGBTop = y;
         int fx = padding - 4;
         int fw = (w - padding * 2) + 8;
 
         y = folderGBTop + gbTitleH + 6;
 
-        // Header row (similar to file-name exclude: checkbox + action buttons aligned)
+        // 見出し行（ファイル名除外と同様にチェックボックスと操作ボタンを整列）
         MoveWindow(g_staticExclFolder, padding, y + 4, 140, labelH, TRUE);
 
-        // Place [フォルダ追加][削除] on the right to keep the section structure consistent.
+        // セクション構造を揃えるため [フォルダ追加][削除] を右側に配置する
         int hdrBtnW = 110;
         int hdrBtnX2 = (w - padding) - hdrBtnW;                 // 削除
         int hdrBtnX1 = hdrBtnX2 - gap - hdrBtnW;               // フォルダ追加
-        if (hdrBtnX1 < padding + 120 + 160) {                  // too narrow → shrink buttons a bit
+        if (hdrBtnX1 < padding + 120 + 160) {                  // 幅が狭い場合はボタンを少し縮める
             hdrBtnW = 95;
             hdrBtnX2 = (w - padding) - hdrBtnW;
             hdrBtnX1 = hdrBtnX2 - gap - hdrBtnW;
@@ -3116,11 +3116,11 @@ static void DoLayout(HWND hwnd) {
 
         y += rowH + gap;
 
-        // List (full width) + bottom buttons (same structure as file-name exclude)
+        // 一覧（全幅）と下部ボタン（ファイル名除外と同じ構造）
         MoveWindow(g_listExcludes, padding, y, w - padding * 2, folderListH, TRUE);
         y += folderListH + gap;
 
-        // Bottom buttons row: 上へ / 下へ / 読込 / 保存
+        // 下部ボタン行: 上へ / 下へ / 読込 / 保存
         int btnCountF = 4;
         int bwF = (w - padding * 2 - gap * (btnCountF - 1)) / btnCountF;
         if (bwF < 80) {
@@ -3138,9 +3138,9 @@ static void DoLayout(HWND hwnd) {
             MoveWindow(g_btnLoadExcl, padding + (bwF + gap) * 2, y, bwF, rowH, TRUE);
             MoveWindow(g_btnSaveExcl, padding + (bwF + gap) * 3, y, bwF, rowH, TRUE);
             y += rowH + gap;
-        }// Pattern input (match file-name exclude style):
-//  - Title line (static)
-//  - Next line: edit + [追加] button
+        }// パターン入力（ファイル名除外と同じ形式）:
+//  - タイトル行（静的テキスト）
+//  - 次の行: 入力欄 + [追加] ボタン
         MoveWindow(g_staticExclPattern, padding, y + 4, w - padding * 2, labelH, TRUE);
         y += rowH + gap;
 
@@ -3166,10 +3166,10 @@ static void DoLayout(HWND hwnd) {
 
         y = folderGBBottom + gap;
 
-        // -------- File name exclude group --------
+        // -------- ファイル名除外グループ --------
         int nameGBTop = y;
         y = nameGBTop + gbTitleH + 6;
-        // Header row (checkbox)
+        // 見出し行（チェックボックス）
         MoveWindow(g_staticExclName, padding, y + 4, 140, labelH, TRUE);
         int chkX = padding + 140;
         int leftMaxX2 = w - padding;
@@ -3178,7 +3178,7 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_chkEnableNameExcl, chkX, y, chk1W, rowH, TRUE);
         y += rowH + gap;
 
-        // Pattern row: edit + add/remove（更新ボタン廃止：編集→Enter/フォーカスアウトで即反映）
+        // パターン行: 入力欄 + 追加/削除（更新ボタン廃止：編集→Enter/フォーカスアウトで即反映）
         int bW2 = 95;
         int btnsW = bW2 * 2 + gap;
         int editW2 = w - (padding * 3 + btnsW);
@@ -3200,7 +3200,7 @@ static void DoLayout(HWND hwnd) {
             y += rowH + gap;
         }
 
-        // List + buttons
+        // 一覧とボタン
         MoveWindow(g_listFName, padding, y, w - padding * 2, nameListHVar, TRUE);
         y += nameListHVar + gap;
 
@@ -3229,10 +3229,10 @@ static void DoLayout(HWND hwnd) {
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    // ---- Right panel (always visible) ----
+    // ---- 右ペイン（常に表示） ----
     int yR = padding;
 
-    // Action buttons row
+    // 操作ボタン行
     int bw = 132;
     int totalW = bw * 3 + gap * 2;
     if (rightW < totalW) bw = max(90, (rightW - gap * 2) / 3);
@@ -3242,7 +3242,7 @@ static void DoLayout(HWND hwnd) {
     MoveWindow(g_btnExportCsv, rightX + (bw + gap) * 2, yR, bw, btnH, TRUE);
     yR += btnH + gap;
 
-    // Progress
+    // 進捗
     int progH = 20;
     int progTextW = 300;
     int progW = max(80, rightW - gap - progTextW);
@@ -3250,13 +3250,13 @@ static void DoLayout(HWND hwnd) {
     MoveWindow(g_staticProgress, rightX + progW + gap, yR + 1, max(80, rightW - progW - gap), progH, TRUE);
     yR += progH + gap;
 
-    // Filter
+    // フィルター
     int filterLabelW = 90;
     MoveWindow(g_staticFilter, rightX, yR + 4, filterLabelW, labelH, TRUE);
     MoveWindow(g_editFilter, rightX + filterLabelW, yR, rightW - filterLabelW, rowH, TRUE);
     yR += rowH + padding;
 
-    // Results list
+    // 結果一覧
     int resultsH = maxBottom - yR;
     if (resultsH < 120) resultsH = 120;
     MoveWindow(g_listResults, rightX, yR, rightW, resultsH, TRUE);
@@ -3265,7 +3265,7 @@ static void DoLayout(HWND hwnd) {
 }
 
 
-// -------------------- Right-click menus --------------------
+// -------------------- 右クリックメニュー --------------------
 static void CopyTextToClipboard(HWND hwnd, const std::wstring& text) {
     if (!OpenClipboard(hwnd)) return;
     EmptyClipboard();
@@ -3456,7 +3456,7 @@ static void ShowFNameContextMenu(HWND hwnd, POINT ptScreen) {
     }
 }
 
-// -------------------- Search thread --------------------
+// -------------------- 検索スレッド --------------------
 static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
     std::unique_ptr<SearchParams> params(reinterpret_cast<SearchParams*>(lpParam));
     g_stopRequested = false;
@@ -3557,7 +3557,7 @@ static DWORD WINAPI SearchThreadProc(LPVOID lpParam) {
                 if (!inC) continue;
                 tpShow = c;
             }
-            else { // Either
+            else { // どちらか
                 if (!inW && !inC) continue;
                 // 両方ヒットなら新しい方を表示
                 tpShow = (inW && inC) ? (w > c ? w : c) : (inW ? w : c);
@@ -3671,7 +3671,7 @@ static void StopSearch() {
     SetStatus(L"停止要求中...");
 }
 
-// -------------------- WndProc --------------------
+// -------------------- ウィンドウプロシージャ --------------------
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
 
@@ -3687,7 +3687,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_hwndMain = hwnd;
         EnsureThemeBrushes();
 
-        // statics
+        // 静的テキスト
         g_staticRoot = CreateWindowW(L"STATIC", L"検索先", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticRootsHint = CreateWindowW(L"STATIC", L"複数指定できます。ダブルクリックで有効/無効を切り替えます", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_ROOTS_HINT, g_hInst, nullptr);
         g_staticMode = CreateWindowW(L"STATIC", L"期間", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
@@ -3701,10 +3701,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_staticExclPattern = CreateWindowW(L"STATIC", L"フォルダ名部分一致/ワイルドカード", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticExclName = CreateWindowW(L"STATIC", L"ファイル名除外:", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
-        // Root controls
+        // ルート操作コントロール
         g_btnBrowseRoot = CreateWindowW(L"BUTTON", L"フォルダ追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_BROWSE_ROOT, g_hInst, nullptr);
 
-        // Roots list (intuitive multi-folder)
+        // ルート一覧（複数フォルダーを直感的に扱う）
         g_listRoots = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_ROOTS, g_hInst, nullptr);
 
@@ -3713,7 +3713,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnRootDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_DOWN, g_hInst, nullptr);
         g_btnRootToggle = CreateWindowW(L"BUTTON", L"有効切替", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ROOT_TOGGLE, g_hInst, nullptr);
 
-        // Mode controls
+        // モード操作コントロール
         g_cmbMode = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_MODE, g_hInst, nullptr);
         SendMessageW(g_cmbMode, CB_ADDSTRING, 0, (LPARAM)L"今日");
@@ -3724,7 +3724,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_editDays = CreateWindowW(L"EDIT", L"3", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | ES_NUMBER,
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_DAYS, g_hInst, nullptr);
 
-        // NEW: time base
+        // 日時基準
         g_cmbTimeBase = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_TIMEBASE, g_hInst, nullptr);
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新日時");
@@ -3765,7 +3765,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         UpdateModernDatePickerText(g_dtpFrom);
         UpdateModernDatePickerText(g_dtpTo);
 
-        // Left panel tab (Search / Excludes)
+        // 左ペインのタブ（検索 / 除外）
         if (!g_hFontTabLeft) {
             g_hFontTabLeft = CreateFontW(
                 -18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
@@ -3787,13 +3787,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             TabCtrl_SetCurSel(g_tabLeft, 0);
         }
 
-        // Advanced frames (behind controls) - used to visually separate sections
+        // 詳細枠（コントロール背面）: セクションを視覚的に分けるために使用
         g_frameFolderExcl = CreateWindowW(L"BUTTON", L"フォルダ除外", WS_CHILD | BS_GROUPBOX,
             0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_frameNameExcl = CreateWindowW(L"BUTTON", L"ファイル名除外", WS_CHILD | BS_GROUPBOX,
             0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
 
-        // Folder exclude controls
+        // フォルダー除外コントロール
         g_chkEnableFolderExcl = CreateWindowW(L"BUTTON", L"フォルダ除外を有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_ENABLE_FOLDER_EXCL, g_hInst, nullptr);
 
@@ -3812,7 +3812,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // 編集欄: Enter で即更新
         g_oldExclEditProc = (WNDPROC)SetWindowLongPtrW(g_editExclPattern, GWLP_WNDPROC, (LONG_PTR)ExclEditProc);
 
-        // Name excludes
+        // ファイル名除外
         g_chkEnableNameExcl = CreateWindowW(L"BUTTON", L"ファイル名除外を有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_ENABLE_NAME_EXCL, g_hInst, nullptr);
         g_chkNameIncludeExt = CreateWindowW(L"BUTTON", L"拡張子を含めて判定", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_NAME_INCLUDE_EXT, g_hInst, nullptr);
         g_editFNamePattern = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FNAME_PATTERN, g_hInst, nullptr);
@@ -3826,7 +3826,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
         g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
 
-        // Extensions group
+        // 拡張子グループ
         CreateWindowW(L"BUTTON", L"対象拡張子", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_GRP_EXT, g_hInst, nullptr);
 
         g_chkXls = CreateWindowW(L"BUTTON", L".xls", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_XLS, g_hInst, nullptr);
@@ -3836,12 +3836,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_chkXltx = CreateWindowW(L"BUTTON", L".xltx", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_XLTX, g_hInst, nullptr);
         g_chkXltm = CreateWindowW(L"BUTTON", L".xltm", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_XLTM, g_hInst, nullptr);
 
-        // Actions
+        // 操作
         g_btnSearch = CreateWindowW(L"BUTTON", L"検索を開始", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SEARCH, g_hInst, nullptr);
         g_btnStop = CreateWindowW(L"BUTTON", L"停止", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_STOP, g_hInst, nullptr);
         g_btnExportCsv = CreateWindowW(L"BUTTON", L"CSV出力", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT_CSV, g_hInst, nullptr);
 
-        // 初期は空(0%)表示。検索中だけ Marquee を有効化する
+        // 初期は空(0%)表示。検索中だけマーキー表示を有効化する
         g_progress = CreateWindowW(PROGRESS_CLASSW, nullptr,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
             0, 0, 0, 0, hwnd, (HMENU)IDC_PROGRESS, g_hInst, nullptr);
@@ -3851,17 +3851,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_staticProgress = CreateWindowW(L"STATIC", L"待機中", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
             0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_PROGRESS, g_hInst, nullptr);
 
-        // Result filter (NEW)
+        // 結果フィルター
         g_editFilter = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FILTER, g_hInst, nullptr);
         SendMessageW(g_editFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"例: 入出荷 / 工場 / 2026");
 
 
-        // Results
+        // 結果
         g_listResults = CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_RESULTS, g_hInst, nullptr);
         InitListViewColumns(g_listResults);
 
-        // Status
+        // ステータス
         g_status = CreateWindowW(STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, g_hInst, nullptr);
 
         HWND controls[] = {
@@ -3903,11 +3903,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             EnableModernOwnerDrawButton(h);
         }
 
-        // Paths: settings.ini / exclude.txt / results.csv are stored under LocalAppData to avoid server permission issues
+        // サーバー権限問題を避けるため、settings.ini / exclude.txt / results.csv は LocalAppData 配下に保存する
         InitPaths();
         EnsureUnicodeIniWithMigration();
 
-        // Load settings
+        // 設定を読み込む
         LoadSettings();
 
         EnableWindow(g_btnStop, FALSE);
@@ -3916,7 +3916,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SetSearchingUi(false);
         SetStatus(L"待機中（デフォルト: 今日 / 更新日時）");
 
-        // Ensure initial layout is applied even before the first WM_SIZE.
+        // 最初の WM_SIZE より前でも初期レイアウトを適用する
         DoLayout(hwnd);
         InvalidateRect(hwnd, nullptr, TRUE);
 
@@ -3996,7 +3996,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         int id = LOWORD(wParam);
         int code = HIWORD(wParam);
 
-        // 更新ボタン廃止: 編集欄から直接更新（Enter or フォーカスアウト）
+        // 更新ボタン廃止: 編集欄から直接更新（Enter またはフォーカスアウト）
         if (id == IDC_EDIT_EXCL_PATTERN && code == EN_KILLFOCUS) {
             CommitExcludeEditIfNeeded();
             return 0;
@@ -4144,7 +4144,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
 
-        // file name selection
+        // ファイル名除外の選択
         if (id == IDC_LIST_FNAME && (code == LBN_SELCHANGE || code == LBN_DBLCLK)) {
             return 0;
         }
@@ -4416,7 +4416,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 
-// -------------------- Page exports --------------------
+// -------------------- ページ公開関数 --------------------
 std::vector<std::wstring> SearchToolPage_GetResultPaths() {
     std::vector<std::wstring> out;
     out.reserve(g_results.size());

@@ -1272,7 +1272,7 @@ namespace {
         std::vector<std::wstring> missing;
 
         if (okWorksheets && worksheets) {
-            // ユーザー指定順にシートを探し、存在しないシートはログ用に missing へ積む
+            // ユーザー指定順にシートを探し、存在しないシートはログ用の未検出一覧へ積む
             for (const auto& target : sheetNames) {
                 IDispatch* ws = GetWorksheetByName(worksheets, target);
                 if (!ws) {
@@ -1770,7 +1770,7 @@ namespace {
 
             case IDC_CMB_PAPER:
                 if (HIWORD(wParam) == CBN_SELCHANGE) {
-                    // no-op, selected paper is read on print
+                    // ここでは何もしない。選択用紙は印刷時に読み取る
                 }
                 return 0;
             }
@@ -1802,7 +1802,7 @@ namespace {
     }
 }
 
-// namespace
+// 名前空間終了
 
 void PrintToolPage_SetFiles(const std::vector<std::wstring>& files) {
     g_files = files;
