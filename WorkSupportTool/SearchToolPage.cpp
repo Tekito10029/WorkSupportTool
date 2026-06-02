@@ -2178,6 +2178,22 @@ static void PaintModernCalendarPopup(HWND hwnd, HDC hdc) {
     int firstDow = DayOfWeek(g_calendarMonth.wYear, g_calendarMonth.wMonth, 1);
     int dim = DaysInMonth(g_calendarMonth.wYear, g_calendarMonth.wMonth);
     int gridTop = top + 30;
+
+    HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(229, 234, 240));
+    HGDIOBJ oldGridPen = SelectObject(hdc, gridPen);
+    for (int row = 0; row <= 6; ++row) {
+        int y = gridTop + row * cellH;
+        MoveToEx(hdc, left, y, nullptr);
+        LineTo(hdc, left + cellW * 7, y);
+    }
+    for (int col = 0; col <= 7; ++col) {
+        int x = left + col * cellW;
+        MoveToEx(hdc, x, gridTop, nullptr);
+        LineTo(hdc, x, gridTop + cellH * 6);
+    }
+    SelectObject(hdc, oldGridPen);
+    DeleteObject(gridPen);
+
     for (int day = 1; day <= dim; ++day) {
         int pos = firstDow + day - 1;
         int row = pos / 7;
