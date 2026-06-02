@@ -1986,7 +1986,8 @@ static void DrawModernDatePickerFace(HWND hwnd, HDC hdc) {
     DeleteObject(clear);
 
     RECT boxRc = rc;
-    InflateRect(&boxRc, -1, -1);
+    boxRc.right = max(boxRc.left, boxRc.right - 1);
+    boxRc.bottom = max(boxRc.top, boxRc.bottom - 1);
     DrawRoundedRect(hdc, boxRc, fill, border, 8);
 
     wchar_t text[64]{};
@@ -2038,6 +2039,7 @@ static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam,
     case WM_PRINTCLIENT:
         DrawModernDatePickerFace(hwnd, reinterpret_cast<HDC>(wParam));
         return 0;
+    case WM_NCPAINT:
     case WM_ERASEBKGND:
         return 1;
     case WM_SETFOCUS:
@@ -2099,7 +2101,9 @@ static void ApplyModernResultsListView(HWND hwnd) {
 
 static void ApplyModernDatePickerTheme(HWND hwnd) {
     if (!hwnd) return;
-    ApplyModernControlTheme(hwnd);
+    SetWindowTheme(hwnd, L"", L"");
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     SetWindowSubclass(hwnd, ModernDatePickerProc, 1, 0);
     InvalidateRect(hwnd, nullptr, TRUE);
     SendMessageW(hwnd, DTM_SETMCCOLOR, MCSC_BACKGROUND, Theme::AppBg);
