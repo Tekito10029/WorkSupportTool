@@ -280,6 +280,14 @@ namespace {
         }
     }
 
+    static LRESULT CallCheckBoxDefaultWithoutNativePaint(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return result;
+    }
+
     static LRESULT CALLBACK ModernCheckBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
         UINT_PTR, DWORD_PTR) {
         switch (msg) {
@@ -301,10 +309,10 @@ namespace {
                 UpdateHotControl(g_hotCheckBox, hwnd, true);
             }
             StartHoverTracking(hwnd);
-            break;
+            return 0;
         case WM_MOUSELEAVE:
             UpdateHotControl(g_hotCheckBox, hwnd, false);
-            break;
+            return 0;
         case WM_LBUTTONDOWN:
         case WM_LBUTTONDBLCLK:
             if (IsWindowEnabled(hwnd)) {
@@ -340,21 +348,14 @@ namespace {
                 UpdateHotControl(g_hotCheckBox, hwnd, false);
             }
             InvalidateRect(hwnd, nullptr, TRUE);
-            break;
+            return 0;
         case WM_SETFOCUS:
         case WM_KILLFOCUS:
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
         case WM_SETTEXT:
-        {
-            LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-            InvalidateRect(hwnd, nullptr, TRUE);
-            return result;
-        }
         case BM_SETCHECK:
-        {
-            LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-            InvalidateRect(hwnd, nullptr, TRUE);
-            return result;
-        }
+            return CallCheckBoxDefaultWithoutNativePaint(hwnd, msg, wParam, lParam);
         case WM_NCDESTROY:
             if (GetCapture() == hwnd) ReleaseCapture();
             UpdateHotControl(g_hotCheckBox, hwnd, false);
