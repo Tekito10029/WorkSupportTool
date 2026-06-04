@@ -271,6 +271,15 @@ namespace {
         }
     }
 
+    static void ToggleModernCheckBox(HWND hwnd) {
+        const LRESULT current = SendMessageW(hwnd, BM_GETCHECK, 0, 0);
+        SendMessageW(hwnd, BM_SETCHECK, current == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED, 0);
+        HWND parent = GetParent(hwnd);
+        if (parent) {
+            SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(hwnd), BN_CLICKED), reinterpret_cast<LPARAM>(hwnd));
+        }
+    }
+
     static LRESULT CALLBACK ModernCheckBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
         UINT_PTR, DWORD_PTR) {
         switch (msg) {
@@ -296,6 +305,36 @@ namespace {
         case WM_MOUSELEAVE:
             UpdateHotControl(g_hotCheckBox, hwnd, false);
             break;
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONDBLCLK:
+            if (IsWindowEnabled(hwnd)) {
+                SetFocus(hwnd);
+                SetCapture(hwnd);
+            }
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        case WM_LBUTTONUP:
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+                POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                RECT rc{};
+                GetClientRect(hwnd, &rc);
+                if (PtInRect(&rc, pt) && IsWindowEnabled(hwnd)) {
+                    ToggleModernCheckBox(hwnd);
+                }
+            }
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        case WM_KEYDOWN:
+            if (wParam == VK_SPACE) return 0;
+            break;
+        case WM_KEYUP:
+            if (wParam == VK_SPACE && IsWindowEnabled(hwnd)) {
+                ToggleModernCheckBox(hwnd);
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
+            break;
         case WM_ENABLE:
             if (!IsWindowEnabled(hwnd)) {
                 UpdateHotControl(g_hotCheckBox, hwnd, false);
@@ -311,14 +350,13 @@ namespace {
             return result;
         }
         case BM_SETCHECK:
-        case WM_LBUTTONUP:
-        case WM_KEYUP:
         {
             LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
             InvalidateRect(hwnd, nullptr, TRUE);
             return result;
         }
         case WM_NCDESTROY:
+            if (GetCapture() == hwnd) ReleaseCapture();
             UpdateHotControl(g_hotCheckBox, hwnd, false);
             RemoveWindowSubclass(hwnd, ModernCheckBoxProc, 1);
             break;
@@ -1862,8 +1900,9 @@ namespace {
         case WM_CTLCOLORBTN:
         {
             HDC hdc = reinterpret_cast<HDC>(wParam);
+            HWND ctrl = reinterpret_cast<HWND>(lParam);
             SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, Theme::Text);
+            SetTextColor(hdc, IsWindowEnabled(ctrl) ? Theme::Text : Theme::DisabledText);
             return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
         }
 

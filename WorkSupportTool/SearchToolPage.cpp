@@ -813,7 +813,24 @@ static bool AnyExtSelected() {
     return IsChecked(g_chkXls) || IsChecked(g_chkXlsx) || IsChecked(g_chkXlsm) ||
         IsChecked(g_chkXlsb) || IsChecked(g_chkXltx) || IsChecked(g_chkXltm);
 }
+
+static bool UseTargetExtensionFilter() {
+    return IsChecked(g_chkNameIncludeExt);
+}
+
+static void SetTargetExtensionSectionEnabled(bool enabled) {
+    HWND hExtGrp = g_hwndMain ? GetDlgItem(g_hwndMain, IDC_GRP_EXT) : nullptr;
+    HWND controls[] = { hExtGrp, g_chkXls, g_chkXlsx, g_chkXlsm, g_chkXlsb, g_chkXltx, g_chkXltm };
+    for (HWND h : controls) {
+        if (!h) continue;
+        EnableWindow(h, enabled ? TRUE : FALSE);
+        InvalidateRect(h, nullptr, TRUE);
+    }
+}
+
 static bool IsTargetExcelFile(const fs::path& p) {
+    if (!UseTargetExtensionFilter()) return true;
+
     std::wstring e = ToLower(p.extension().wstring());
     if (e == L".xls" || e == L".xlsx" || e == L".xlsm" || e == L".xlsb" || e == L".xltx" || e == L".xltm") {
         return ExtChecked(e);
@@ -1731,7 +1748,9 @@ static void UpdateUiEnableStates() {
     EnableWindow(g_btnAddPattern, folderOn);
 
     bool nameOn = IsChecked(g_chkEnableNameExcl);
-    EnableWindow(g_chkNameIncludeExt, nameOn);
+    EnableWindow(g_chkNameIncludeExt, !g_searching);
+    InvalidateRect(g_chkNameIncludeExt, nullptr, TRUE);
+    SetTargetExtensionSectionEnabled(!g_searching && UseTargetExtensionFilter());
     EnableWindow(g_editFNamePattern, nameOn);
     EnableWindow(g_btnAddFName, nameOn);
     EnableWindow(g_btnRemoveFName, nameOn);
@@ -1907,6 +1926,15 @@ static void DrawModernCheckBoxFace(HWND hwnd, HDC hdc) {
     }
 }
 
+static void ToggleModernCheckBox(HWND hwnd) {
+    const LRESULT current = SendMessageW(hwnd, BM_GETCHECK, 0, 0);
+    SendMessageW(hwnd, BM_SETCHECK, current == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED, 0);
+    HWND parent = GetParent(hwnd);
+    if (parent) {
+        SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(hwnd), BN_CLICKED), reinterpret_cast<LPARAM>(hwnd));
+    }
+}
+
 static LRESULT CALLBACK ModernCheckBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
     UINT_PTR, DWORD_PTR) {
     switch (msg) {
@@ -1932,6 +1960,36 @@ static LRESULT CALLBACK ModernCheckBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
     case WM_MOUSELEAVE:
         UpdateHotControl(g_hotCheckBox, hwnd, false);
         break;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+        if (IsWindowEnabled(hwnd)) {
+            SetFocus(hwnd);
+            SetCapture(hwnd);
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    case WM_LBUTTONUP:
+        if (GetCapture() == hwnd) {
+            ReleaseCapture();
+            POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            if (PtInRect(&rc, pt) && IsWindowEnabled(hwnd)) {
+                ToggleModernCheckBox(hwnd);
+            }
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_SPACE) return 0;
+        break;
+    case WM_KEYUP:
+        if (wParam == VK_SPACE && IsWindowEnabled(hwnd)) {
+            ToggleModernCheckBox(hwnd);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+        break;
     case WM_ENABLE:
         if (!IsWindowEnabled(hwnd)) {
             UpdateHotControl(g_hotCheckBox, hwnd, false);
@@ -1947,14 +2005,13 @@ static LRESULT CALLBACK ModernCheckBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
         return result;
     }
     case BM_SETCHECK:
-    case WM_LBUTTONUP:
-    case WM_KEYUP:
     {
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
         InvalidateRect(hwnd, nullptr, TRUE);
         return result;
     }
     case WM_NCDESTROY:
+        if (GetCapture() == hwnd) ReleaseCapture();
         UpdateHotControl(g_hotCheckBox, hwnd, false);
         RemoveWindowSubclass(hwnd, ModernCheckBoxProc, 1);
         break;
@@ -3238,8 +3295,8 @@ static void DoLayout(HWND hwnd) {
         MoveWindow(g_staticTimeBase, x, y + 4, tbLabelW, labelH, TRUE);
         MoveWindow(g_cmbTimeBase, x + tbLabelW, y, tbComboW, comboDropH, TRUE);
         y += rowH + padding;
-        // ファイル名除外オプション（判定に拡張子を含める）
-        // これは「ファイル名除外」で拡張子を含めて比較するかどうかの設定。
+        // 拡張子フィルターを検索条件に含めるかどうかの設定。
+        // オフのときは対象拡張子セクションを無効化し、拡張子では絞り込まない。
         MoveWindow(g_chkNameIncludeExt, padding, y, max(220, w - padding * 2), rowH, TRUE);
         y += rowH + gap;
 
@@ -3807,7 +3864,7 @@ static std::wstring GetModeTextForStatus()
 static void StartSearch() {
     if (g_searching) return;
 
-    if (!AnyExtSelected()) {
+    if (UseTargetExtensionFilter() && !AnyExtSelected()) {
         MessageBoxW(g_hwndMain, L"対象拡張子が1つも選択されていません。", L"確認", MB_OK | MB_ICONWARNING);
         return;
     }
@@ -4008,7 +4065,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         // ファイル名除外
         g_chkEnableNameExcl = CreateWindowW(L"BUTTON", L"ファイル名除外を有効", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_ENABLE_NAME_EXCL, g_hInst, nullptr);
-        g_chkNameIncludeExt = CreateWindowW(L"BUTTON", L"拡張子を含めて判定", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_NAME_INCLUDE_EXT, g_hInst, nullptr);
+        g_chkNameIncludeExt = CreateWindowW(L"BUTTON", L"拡張子を含めて検索", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_CHK_NAME_INCLUDE_EXT, g_hInst, nullptr);
         g_editFNamePattern = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FNAME_PATTERN, g_hInst, nullptr);
         g_btnAddFName = CreateWindowW(L"BUTTON", L"追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_FNAME, g_hInst, nullptr);
         g_btnRemoveFName = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FNAME, g_hInst, nullptr);
@@ -4173,8 +4230,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_CTLCOLORBTN:
     {
         HDC hdc = reinterpret_cast<HDC>(wParam);
+        HWND ctrl = reinterpret_cast<HWND>(lParam);
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, Theme::Text);
+        SetTextColor(hdc, IsWindowEnabled(ctrl) ? Theme::Text : Theme::DisabledText);
         return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
     }
 
@@ -4268,8 +4326,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
 
-        if (id == IDC_CHK_ENABLE_FOLDER_EXCL || id == IDC_CHK_ENABLE_NAME_EXCL) {
+        if (id == IDC_CHK_ENABLE_FOLDER_EXCL || id == IDC_CHK_ENABLE_NAME_EXCL || id == IDC_CHK_NAME_INCLUDE_EXT) {
             UpdateUiEnableStates();
+            SaveSettings();
             return 0;
         }
 
