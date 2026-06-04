@@ -271,9 +271,14 @@ namespace {
         }
     }
 
+    static void RedrawModernCheckBoxNow(HWND hwnd) {
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    }
+
     static void ToggleModernCheckBox(HWND hwnd) {
         const LRESULT current = SendMessageW(hwnd, BM_GETCHECK, 0, 0);
         SendMessageW(hwnd, BM_SETCHECK, current == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED, 0);
+        RedrawModernCheckBoxNow(hwnd);
         HWND parent = GetParent(hwnd);
         if (parent) {
             SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(hwnd), BN_CLICKED), reinterpret_cast<LPARAM>(hwnd));
@@ -284,7 +289,7 @@ namespace {
         SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
         SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
-        InvalidateRect(hwnd, nullptr, TRUE);
+        RedrawModernCheckBoxNow(hwnd);
         return result;
     }
 
@@ -319,7 +324,7 @@ namespace {
                 SetFocus(hwnd);
                 SetCapture(hwnd);
             }
-            InvalidateRect(hwnd, nullptr, TRUE);
+            RedrawModernCheckBoxNow(hwnd);
             return 0;
         case WM_LBUTTONUP:
             if (GetCapture() == hwnd) {
@@ -331,7 +336,7 @@ namespace {
                     ToggleModernCheckBox(hwnd);
                 }
             }
-            InvalidateRect(hwnd, nullptr, TRUE);
+            RedrawModernCheckBoxNow(hwnd);
             return 0;
         case WM_KEYDOWN:
             if (wParam == VK_SPACE) return 0;
@@ -339,7 +344,7 @@ namespace {
         case WM_KEYUP:
             if (wParam == VK_SPACE && IsWindowEnabled(hwnd)) {
                 ToggleModernCheckBox(hwnd);
-                InvalidateRect(hwnd, nullptr, TRUE);
+                RedrawModernCheckBoxNow(hwnd);
                 return 0;
             }
             break;
@@ -347,11 +352,11 @@ namespace {
             if (!IsWindowEnabled(hwnd)) {
                 UpdateHotControl(g_hotCheckBox, hwnd, false);
             }
-            InvalidateRect(hwnd, nullptr, TRUE);
+            RedrawModernCheckBoxNow(hwnd);
             return 0;
         case WM_SETFOCUS:
         case WM_KILLFOCUS:
-            InvalidateRect(hwnd, nullptr, TRUE);
+            RedrawModernCheckBoxNow(hwnd);
             return 0;
         case WM_SETTEXT:
         case BM_SETCHECK:
