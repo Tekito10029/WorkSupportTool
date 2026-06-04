@@ -315,6 +315,7 @@ static HWND g_calendarTarget = nullptr;
 static SYSTEMTIME g_calendarMonth{};
 static HWND g_hotButton = nullptr;
 static HWND g_hotCombo = nullptr;
+static HWND g_hotCheckBox = nullptr;
 
 // 詳細表示切り替え
 
@@ -1842,6 +1843,129 @@ static LRESULT CALLBACK ModernButtonHoverProc(HWND hwnd, UINT msg, WPARAM wParam
 static void EnableButtonHoverHighlight(HWND hwnd) {
     if (!hwnd) return;
     SetWindowSubclass(hwnd, ModernButtonHoverProc, 1, 0);
+}
+
+static void DrawModernCheckBoxFace(HWND hwnd, HDC hdc) {
+    if (!hwnd || !hdc) return;
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    const bool disabled = !IsWindowEnabled(hwnd);
+    const bool hot = (g_hotCheckBox == hwnd);
+    const bool focused = GetFocus() == hwnd;
+    const bool checked = (SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+    HBRUSH bg = CreateSolidBrush(Theme::CardBg);
+    FillRect(hdc, &rc, bg);
+    DeleteObject(bg);
+
+    constexpr int boxSize = 18;
+    RECT boxRc{};
+    boxRc.left = 2;
+    boxRc.top = rc.top + max(0, ((rc.bottom - rc.top) - boxSize) / 2);
+    boxRc.right = boxRc.left + boxSize;
+    boxRc.bottom = boxRc.top + boxSize;
+
+    COLORREF boxFill = disabled ? Theme::DisabledBg : (checked ? Theme::Primary : (hot ? Theme::NeutralButtonHot : Theme::CardBg));
+    COLORREF boxBorder = disabled ? Theme::Border : (checked || focused ? Theme::Primary : (hot ? RGB(147, 197, 253) : Theme::Border));
+    DrawRoundedRect(hdc, boxRc, boxFill, boxBorder, 6);
+
+    if (checked) {
+        HPEN checkPen = CreatePen(PS_SOLID, 2, disabled ? Theme::DisabledText : RGB(255, 255, 255));
+        HGDIOBJ oldPen = SelectObject(hdc, checkPen);
+        MoveToEx(hdc, boxRc.left + 4, boxRc.top + 9, nullptr);
+        LineTo(hdc, boxRc.left + 8, boxRc.bottom - 5);
+        LineTo(hdc, boxRc.right - 4, boxRc.top + 5);
+        SelectObject(hdc, oldPen);
+        DeleteObject(checkPen);
+    }
+
+    wchar_t text[128]{};
+    GetWindowTextW(hwnd, text, static_cast<int>(std::size(text)));
+    RECT textRc = rc;
+    textRc.left = boxRc.right + 8;
+    textRc.right -= 2;
+
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+    HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, disabled ? Theme::DisabledText : Theme::Text);
+    DrawTextW(hdc, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(hdc, oldFont);
+
+    if (focused) {
+        RECT focusRc = rc;
+        focusRc.left = 0;
+        InflateRect(&focusRc, -1, -1);
+        HPEN pen = CreatePen(PS_DOT, 1, Theme::Primary);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        RoundRect(hdc, focusRc.left, focusRc.top, focusRc.right, focusRc.bottom, 8, 8);
+        SelectObject(hdc, oldBrush);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+    }
+}
+
+static LRESULT CALLBACK ModernCheckBoxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        DrawModernCheckBoxFace(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_PRINTCLIENT:
+        DrawModernCheckBoxFace(hwnd, reinterpret_cast<HDC>(wParam));
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEMOVE:
+        if (g_hotCheckBox != hwnd) {
+            UpdateHotControl(g_hotCheckBox, hwnd, true);
+        }
+        StartHoverTracking(hwnd);
+        break;
+    case WM_MOUSELEAVE:
+        UpdateHotControl(g_hotCheckBox, hwnd, false);
+        break;
+    case WM_ENABLE:
+        if (!IsWindowEnabled(hwnd)) {
+            UpdateHotControl(g_hotCheckBox, hwnd, false);
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        break;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_SETTEXT:
+    {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return result;
+    }
+    case BM_SETCHECK:
+    case WM_LBUTTONUP:
+    case WM_KEYUP:
+    {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return result;
+    }
+    case WM_NCDESTROY:
+        UpdateHotControl(g_hotCheckBox, hwnd, false);
+        RemoveWindowSubclass(hwnd, ModernCheckBoxProc, 1);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static void ApplyModernCheckBox(HWND hwnd) {
+    if (!hwnd) return;
+    SetWindowSubclass(hwnd, ModernCheckBoxProc, 1, 0);
+    InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
@@ -3960,6 +4084,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         ApplyModernComboBox(g_cmbMode);
         ApplyModernComboBox(g_cmbTimeBase);
         ApplyModernResultsListView(g_listResults);
+
+        HWND modernCheckBoxes[] = {
+            g_chkEnableFolderExcl, g_chkEnableNameExcl, g_chkNameIncludeExt,
+            g_chkXls, g_chkXlsx, g_chkXlsm, g_chkXlsb, g_chkXltx, g_chkXltm
+        };
+        for (HWND h : modernCheckBoxes) {
+            ApplyModernCheckBox(h);
+        }
 
         SendMessageW(g_btnSearch, WM_SETFONT, (WPARAM)hUiFontBold, TRUE);
 
