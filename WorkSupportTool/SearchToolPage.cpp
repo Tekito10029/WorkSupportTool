@@ -109,7 +109,6 @@ enum : int {
     IDC_STATIC_EXCL_PATTERN,
     IDC_EDIT_EXCL_PATTERN,
     IDC_BTN_ADD_PATTERN,
-    IDC_BTN_UPDATE_PATTERN,
 
     // ファイル名除外
     IDC_STATIC_EXCL_NAME,
@@ -117,7 +116,6 @@ enum : int {
     IDC_CHK_NAME_INCLUDE_EXT,
     IDC_EDIT_FNAME_PATTERN,
     IDC_BTN_ADD_FNAME,
-    IDC_BTN_UPDATE_FNAME,
     IDC_BTN_REMOVE_FNAME,
     IDC_BTN_FNAME_UP,
     IDC_BTN_FNAME_DOWN,
@@ -168,7 +166,6 @@ enum : int {
     CMD_EXCL_SAVE,
 
     CMD_FNAME_ADD,
-    CMD_FNAME_UPDATE,
     CMD_FNAME_REMOVE,
     CMD_FNAME_UP,
     CMD_FNAME_DOWN,
@@ -367,13 +364,6 @@ static std::wstring EllipsizePathRight(const std::wstring& s, size_t maxChars)
     if (maxChars <= 3) return s.substr(0, maxChars);
     return L"..." + s.substr(s.size() - (maxChars - 3));
 }
-// ---- 前方宣言（複数ルート補助関数用） ----
-static std::wstring ToLower(std::wstring s);
-static std::wstring Trim(const std::wstring& s);
-static std::wstring GetWindowTextWStr(HWND h);
-static void SetWindowTextWStr(HWND h, const std::wstring& s);
-static fs::path NormalizePath(const fs::path& p);
-
 // ---- 前方宣言（定義より前で使用する関数） ----
 // 一部のハンドラー/確定処理が定義より前にあるため必要
 static void RefreshFileNameListBox();
@@ -514,22 +504,30 @@ static void AddRootToListBoxDedup(const std::wstring& path)
     SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
 }
 
-static void MoveRootItem(int from, int to)
+static bool MoveListBoxItem(HWND listBox, int from, int to)
 {
-    if (!g_listRoots) return;
-    int n = (int)SendMessageW(g_listRoots, LB_GETCOUNT, 0, 0);
-    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
+    if (!listBox) return false;
+    int n = (int)SendMessageW(listBox, LB_GETCOUNT, 0, 0);
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return false;
 
     wchar_t buf[2048]{};
-    SendMessageW(g_listRoots, LB_GETTEXT, (WPARAM)from, (LPARAM)buf);
-    std::wstring item = buf;
+    SendMessageW(listBox, LB_GETTEXT, (WPARAM)from, (LPARAM)buf);
+    SendMessageW(listBox, LB_DELETESTRING, (WPARAM)from, 0);
+    int idx = (int)SendMessageW(listBox, LB_INSERTSTRING, (WPARAM)to, (LPARAM)buf);
+    SendMessageW(listBox, LB_SETCURSEL, (WPARAM)idx, 0);
+    return true;
+}
 
-    // 元の項目を削除
-    SendMessageW(g_listRoots, LB_DELETESTRING, (WPARAM)from, 0);
-
-    // 移動先へ再挿入
-    int idx = (int)SendMessageW(g_listRoots, LB_INSERTSTRING, (WPARAM)to, (LPARAM)item.c_str());
-    SendMessageW(g_listRoots, LB_SETCURSEL, (WPARAM)idx, 0);
+template <class T, class Refresh>
+static bool MoveVectorItem(std::vector<T>& items, HWND listBox, int from, int to, Refresh refresh)
+{
+    if (from < 0 || to < 0 || from >= (int)items.size() || to >= (int)items.size() || from == to) {
+        return false;
+    }
+    std::swap(items[(size_t)from], items[(size_t)to]);
+    refresh();
+    SendMessageW(listBox, LB_SETCURSEL, (WPARAM)to, 0);
+    return true;
 }
 
 // ---------------------------------------------------
@@ -3601,8 +3599,9 @@ static void ShowRootsContextMenu(HWND hwnd, POINT ptScreen) {
     else if (cmd == CMD_ROOT_UP || cmd == CMD_ROOT_DOWN) {
         int tgt = (cmd == CMD_ROOT_UP) ? (sel - 1) : (sel + 1);
         if (tgt >= 0 && tgt < n) {
-            MoveRootItem(sel, tgt);
-            SaveSettings();
+            if (MoveListBoxItem(g_listRoots, sel, tgt)) {
+                SaveSettings();
+            }
         }
     }
 }
@@ -3653,10 +3652,7 @@ static void ShowExcludesContextMenu(HWND hwnd, POINT ptScreen) {
     }
     else if (cmd == CMD_EXCL_UP || cmd == CMD_EXCL_DOWN) {
         int tgt = (cmd == CMD_EXCL_UP) ? (sel - 1) : (sel + 1);
-        if (tgt >= 0 && tgt < (int)g_excludeRules.size()) {
-            std::swap(g_excludeRules[(size_t)sel], g_excludeRules[(size_t)tgt]);
-            RefreshExcludeListBox();
-            SendMessageW(g_listExcludes, LB_SETCURSEL, (WPARAM)tgt, 0);
+        if (MoveVectorItem(g_excludeRules, g_listExcludes, sel, tgt, RefreshExcludeListBox)) {
             SaveSettings();
         }
     }
@@ -3686,30 +3682,17 @@ static void ShowFNameContextMenu(HWND hwnd, POINT ptScreen) {
         SaveSettings();
         return;
     }
-    if (cmd == CMD_FNAME_REMOVE) {
-        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_REMOVE_FNAME, 0), 0);
-        SaveSettings();
-        return;
+    int forwardId = 0;
+    switch (cmd) {
+    case CMD_FNAME_REMOVE: forwardId = IDC_BTN_REMOVE_FNAME; break;
+    case CMD_FNAME_UP: forwardId = IDC_BTN_FNAME_UP; break;
+    case CMD_FNAME_DOWN: forwardId = IDC_BTN_FNAME_DOWN; break;
+    case CMD_FNAME_LOAD: forwardId = IDC_BTN_LOAD_FNAME_EXCL; break;
+    case CMD_FNAME_SAVE: forwardId = IDC_BTN_SAVE_FNAME_EXCL; break;
     }
-    if (cmd == CMD_FNAME_UP) {
-        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_FNAME_UP, 0), 0);
+    if (forwardId) {
+        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(forwardId, 0), 0);
         SaveSettings();
-        return;
-    }
-    if (cmd == CMD_FNAME_DOWN) {
-        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_FNAME_DOWN, 0), 0);
-        SaveSettings();
-        return;
-    }
-    if (cmd == CMD_FNAME_LOAD) {
-        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_LOAD_FNAME_EXCL, 0), 0);
-        SaveSettings();
-        return;
-    }
-    if (cmd == CMD_FNAME_SAVE) {
-        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_SAVE_FNAME_EXCL, 0), 0);
-        SaveSettings();
-        return;
     }
 }
 
@@ -4310,8 +4293,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int n = (int)SendMessageW(g_listRoots, LB_GETCOUNT, 0, 0);
             int tgt = (id == IDC_BTN_ROOT_UP) ? (sel - 1) : (sel + 1);
             if (tgt < 0 || tgt >= n) return 0;
-            MoveRootItem(sel, tgt);
-            SaveSettings();
+            if (MoveListBoxItem(g_listRoots, sel, tgt)) {
+                SaveSettings();
+            }
             return 0;
         }
         if (id == IDC_CMB_MODE && code == CBN_SELCHANGE) {
@@ -4368,12 +4352,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (id == IDC_BTN_EXCL_UP || id == IDC_BTN_EXCL_DOWN) {
             int sel = (int)SendMessageW(g_listExcludes, LB_GETCURSEL, 0, 0);
             if (sel == LB_ERR) return 0;
-            int n = (int)g_excludeRules.size();
             int tgt = (id == IDC_BTN_EXCL_UP) ? (sel - 1) : (sel + 1);
-            if (tgt < 0 || tgt >= n) return 0;
-            std::swap(g_excludeRules[(size_t)sel], g_excludeRules[(size_t)tgt]);
-            RefreshExcludeListBox();
-            SendMessageW(g_listExcludes, LB_SETCURSEL, (WPARAM)tgt, 0);
+            MoveVectorItem(g_excludeRules, g_listExcludes, sel, tgt, RefreshExcludeListBox);
             return 0;
         }
 
@@ -4448,13 +4428,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (id == IDC_BTN_FNAME_UP || id == IDC_BTN_FNAME_DOWN) {
             int sel = (int)SendMessageW(g_listFName, LB_GETCURSEL, 0, 0);
             if (sel == LB_ERR) return 0;
-            int n = (int)g_fileNamePatterns.size();
             int tgt = (id == IDC_BTN_FNAME_UP) ? (sel - 1) : (sel + 1);
-            if (tgt < 0 || tgt >= n) return 0;
-            std::swap(g_fileNamePatterns[(size_t)sel], g_fileNamePatterns[(size_t)tgt]);
-            RefreshFileNameListBox();
-            SendMessageW(g_listFName, LB_SETCURSEL, (WPARAM)tgt, 0);
-            RebuildFileNameExcludeCache();
+            if (MoveVectorItem(g_fileNamePatterns, g_listFName, sel, tgt, RefreshFileNameListBox)) {
+                RebuildFileNameExcludeCache();
+            }
             return 0;
         }
 
