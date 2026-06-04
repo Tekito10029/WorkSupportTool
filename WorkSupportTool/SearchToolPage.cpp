@@ -313,6 +313,8 @@ static SYSTEMTIME g_dateTo{};
 static HWND g_calendarPopup = nullptr;
 static HWND g_calendarTarget = nullptr;
 static SYSTEMTIME g_calendarMonth{};
+static HWND g_hotButton = nullptr;
+static HWND g_hotCombo = nullptr;
 
 // 詳細表示切り替え
 
@@ -1796,6 +1798,52 @@ static void ApplyModernListBox(HWND hwnd, int itemHeight = 30) {
 
 static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius);
 
+static void UpdateHotControl(HWND& hotControl, HWND hwnd, bool hot) {
+    HWND oldHot = hotControl;
+    hotControl = hot ? hwnd : (hotControl == hwnd ? nullptr : hotControl);
+    if (oldHot && oldHot != hotControl) InvalidateRect(oldHot, nullptr, TRUE);
+    if (hotControl && oldHot != hotControl) InvalidateRect(hotControl, nullptr, TRUE);
+}
+
+static void StartHoverTracking(HWND hwnd) {
+    TRACKMOUSEEVENT tme{};
+    tme.cbSize = sizeof(tme);
+    tme.dwFlags = TME_LEAVE;
+    tme.hwndTrack = hwnd;
+    TrackMouseEvent(&tme);
+}
+
+static LRESULT CALLBACK ModernButtonHoverProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_MOUSEMOVE:
+        if (g_hotButton != hwnd) {
+            UpdateHotControl(g_hotButton, hwnd, true);
+        }
+        StartHoverTracking(hwnd);
+        break;
+    case WM_MOUSELEAVE:
+        UpdateHotControl(g_hotButton, hwnd, false);
+        break;
+    case WM_ENABLE:
+        if (!IsWindowEnabled(hwnd)) {
+            UpdateHotControl(g_hotButton, hwnd, false);
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        break;
+    case WM_NCDESTROY:
+        UpdateHotControl(g_hotButton, hwnd, false);
+        RemoveWindowSubclass(hwnd, ModernButtonHoverProc, 1);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static void EnableButtonHoverHighlight(HWND hwnd) {
+    if (!hwnd) return;
+    SetWindowSubclass(hwnd, ModernButtonHoverProc, 1, 0);
+}
+
 static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
     if (!hwnd || !hdc) return;
 
@@ -1803,8 +1851,9 @@ static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
     GetClientRect(hwnd, &rc);
     const bool disabled = !IsWindowEnabled(hwnd);
     const bool focused = GetFocus() == hwnd;
-    COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
-    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    const bool hot = (g_hotCombo == hwnd);
+    COLORREF fill = disabled ? Theme::DisabledBg : (hot ? Theme::NeutralButtonHot : Theme::CardBg);
+    COLORREF border = focused ? Theme::Primary : (hot ? RGB(147, 197, 253) : Theme::Border);
     COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
 
     HBRUSH clear = CreateSolidBrush(Theme::CardBg);
@@ -1870,6 +1919,15 @@ static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
         return 0;
     case WM_ERASEBKGND:
         return 1;
+    case WM_MOUSEMOVE:
+        if (g_hotCombo != hwnd) {
+            UpdateHotControl(g_hotCombo, hwnd, true);
+        }
+        StartHoverTracking(hwnd);
+        break;
+    case WM_MOUSELEAVE:
+        UpdateHotControl(g_hotCombo, hwnd, false);
+        break;
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
     case WM_ENABLE:
@@ -1887,6 +1945,7 @@ static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
         return result;
     }
     case WM_NCDESTROY:
+        UpdateHotControl(g_hotCombo, hwnd, false);
         RemoveWindowSubclass(hwnd, ModernComboBoxProc, 1);
         break;
     }
@@ -1958,8 +2017,9 @@ static void DrawModernDatePickerFace(HWND hwnd, HDC hdc) {
     GetClientRect(hwnd, &rc);
     const bool disabled = !IsWindowEnabled(hwnd);
     const bool focused = GetFocus() == hwnd;
-    COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
-    COLORREF border = focused ? Theme::Primary : Theme::Border;
+    const bool hot = (g_hotCombo == hwnd);
+    COLORREF fill = disabled ? Theme::DisabledBg : (hot ? Theme::NeutralButtonHot : Theme::CardBg);
+    COLORREF border = focused ? Theme::Primary : (hot ? RGB(147, 197, 253) : Theme::Border);
     COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
 
     HBRUSH clear = CreateSolidBrush(Theme::CardBg);
@@ -2025,6 +2085,15 @@ static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam,
     case WM_NCPAINT:
     case WM_ERASEBKGND:
         return 1;
+    case WM_MOUSEMOVE:
+        if (g_hotCombo != hwnd) {
+            UpdateHotControl(g_hotCombo, hwnd, true);
+        }
+        StartHoverTracking(hwnd);
+        break;
+    case WM_MOUSELEAVE:
+        UpdateHotControl(g_hotCombo, hwnd, false);
+        break;
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
     case WM_ENABLE:
@@ -2041,6 +2110,7 @@ static LRESULT CALLBACK ModernDatePickerProc(HWND hwnd, UINT msg, WPARAM wParam,
         }
         break;
     case WM_NCDESTROY:
+        UpdateHotControl(g_hotCombo, hwnd, false);
         RemoveWindowSubclass(hwnd, ModernDatePickerProc, 1);
         break;
     }
@@ -2323,7 +2393,7 @@ static bool DrawModernButton(const DRAWITEMSTRUCT* dis) {
     const int id = GetDlgCtrlID(dis->hwndItem);
     const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
     const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
-    const bool hot = (dis->itemState & ODS_HOTLIGHT) != 0;
+    const bool hot = ((dis->itemState & ODS_HOTLIGHT) != 0) || (g_hotButton == dis->hwndItem);
     const bool focused = (dis->itemState & ODS_FOCUS) != 0;
     const bool primary = IsPrimaryButtonId(id);
     const bool danger = IsDangerButtonId(id);
@@ -2339,7 +2409,7 @@ static bool DrawModernButton(const DRAWITEMSTRUCT* dis) {
         textColor = Theme::DisabledText;
     }
     else if (primary) {
-        fill = pressed ? Theme::PrimaryHot : Theme::Primary;
+        fill = (pressed || hot) ? Theme::PrimaryHot : Theme::Primary;
         border = Theme::PrimaryHot;
         textColor = RGB(255, 255, 255);
     }
@@ -3901,6 +3971,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         };
         for (HWND h : modernButtons) {
             EnableModernOwnerDrawButton(h);
+            EnableButtonHoverHighlight(h);
         }
 
         // サーバー権限問題を避けるため、settings.ini / exclude.txt / results.csv は LocalAppData 配下に保存する

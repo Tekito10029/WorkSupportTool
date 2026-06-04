@@ -129,6 +129,8 @@ namespace {
     std::wstring g_selectedPrinter;
     HGLOBAL g_hDevMode = nullptr;
     HGLOBAL g_hDevNames = nullptr;
+    HWND g_hotButton = nullptr;
+    HWND g_hotCombo = nullptr;
 
 
     static void EnsureThemeBrushes() {
@@ -160,6 +162,52 @@ namespace {
 
     static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius);
 
+    static void UpdateHotControl(HWND& hotControl, HWND hwnd, bool hot) {
+        HWND oldHot = hotControl;
+        hotControl = hot ? hwnd : (hotControl == hwnd ? nullptr : hotControl);
+        if (oldHot && oldHot != hotControl) InvalidateRect(oldHot, nullptr, TRUE);
+        if (hotControl && oldHot != hotControl) InvalidateRect(hotControl, nullptr, TRUE);
+    }
+
+    static void StartHoverTracking(HWND hwnd) {
+        TRACKMOUSEEVENT tme{};
+        tme.cbSize = sizeof(tme);
+        tme.dwFlags = TME_LEAVE;
+        tme.hwndTrack = hwnd;
+        TrackMouseEvent(&tme);
+    }
+
+    static LRESULT CALLBACK ModernButtonHoverProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+        UINT_PTR, DWORD_PTR) {
+        switch (msg) {
+        case WM_MOUSEMOVE:
+            if (g_hotButton != hwnd) {
+                UpdateHotControl(g_hotButton, hwnd, true);
+            }
+            StartHoverTracking(hwnd);
+            break;
+        case WM_MOUSELEAVE:
+            UpdateHotControl(g_hotButton, hwnd, false);
+            break;
+        case WM_ENABLE:
+            if (!IsWindowEnabled(hwnd)) {
+                UpdateHotControl(g_hotButton, hwnd, false);
+            }
+            InvalidateRect(hwnd, nullptr, TRUE);
+            break;
+        case WM_NCDESTROY:
+            UpdateHotControl(g_hotButton, hwnd, false);
+            RemoveWindowSubclass(hwnd, ModernButtonHoverProc, 1);
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+
+    static void EnableButtonHoverHighlight(HWND hwnd) {
+        if (!hwnd) return;
+        SetWindowSubclass(hwnd, ModernButtonHoverProc, 1, 0);
+    }
+
     static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
         if (!hwnd || !hdc) return;
 
@@ -167,8 +215,9 @@ namespace {
         GetClientRect(hwnd, &rc);
         const bool disabled = !IsWindowEnabled(hwnd);
         const bool focused = GetFocus() == hwnd;
-        COLORREF fill = disabled ? Theme::DisabledBg : Theme::CardBg;
-        COLORREF border = focused ? Theme::Primary : Theme::Border;
+        const bool hot = (g_hotCombo == hwnd);
+        COLORREF fill = disabled ? Theme::DisabledBg : (hot ? Theme::NeutralButtonHot : Theme::CardBg);
+        COLORREF border = focused ? Theme::Primary : (hot ? RGB(147, 197, 253) : Theme::Border);
         COLORREF textColor = disabled ? Theme::DisabledText : Theme::Text;
 
         HBRUSH clear = CreateSolidBrush(Theme::CardBg);
@@ -234,6 +283,15 @@ namespace {
             return 0;
         case WM_ERASEBKGND:
             return 1;
+        case WM_MOUSEMOVE:
+            if (g_hotCombo != hwnd) {
+                UpdateHotControl(g_hotCombo, hwnd, true);
+            }
+            StartHoverTracking(hwnd);
+            break;
+        case WM_MOUSELEAVE:
+            UpdateHotControl(g_hotCombo, hwnd, false);
+            break;
         case WM_SETFOCUS:
         case WM_KILLFOCUS:
         case WM_ENABLE:
@@ -251,6 +309,7 @@ namespace {
             return result;
         }
         case WM_NCDESTROY:
+            UpdateHotControl(g_hotCombo, hwnd, false);
             RemoveWindowSubclass(hwnd, ModernComboBoxProc, 1);
             break;
         }
@@ -285,7 +344,7 @@ namespace {
         const int id = GetDlgCtrlID(dis->hwndItem);
         const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
         const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
-        const bool hot = (dis->itemState & ODS_HOTLIGHT) != 0;
+        const bool hot = ((dis->itemState & ODS_HOTLIGHT) != 0) || (g_hotButton == dis->hwndItem);
         const bool focused = (dis->itemState & ODS_FOCUS) != 0;
         const bool primary = (id == IDC_BTN_PRINT);
 
@@ -298,7 +357,7 @@ namespace {
             textColor = Theme::DisabledText;
         }
         else if (primary) {
-            fill = pressed ? Theme::PrimaryHot : Theme::Primary;
+            fill = (pressed || hot) ? Theme::PrimaryHot : Theme::Primary;
             border = Theme::PrimaryHot;
             textColor = RGB(255, 255, 255);
         }
@@ -1642,6 +1701,7 @@ namespace {
             };
             for (HWND h : modernButtons) {
                 EnableModernOwnerDrawButton(h);
+                EnableButtonHoverHighlight(h);
             }
 
             RefreshPrinterCombo();
