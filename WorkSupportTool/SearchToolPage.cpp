@@ -3782,7 +3782,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ti.mask = TCIF_TEXT;
             ti.pszText = const_cast<LPWSTR>(L"検索条件");
             TabCtrl_InsertItem(g_tabLeft, 0, &ti);
-            ti.pszText = const_cast<LPWSTR>(L"除外");
+            ti.pszText = const_cast<LPWSTR>(L"除外条件");
             TabCtrl_InsertItem(g_tabLeft, 1, &ti);
             TabCtrl_SetCurSel(g_tabLeft, 0);
         }
@@ -3804,8 +3804,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnRemoveExcl = CreateWindowW(L"BUTTON", L"選択削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_EXCL, g_hInst, nullptr);
         g_btnExclUp = CreateWindowW(L"BUTTON", L"上へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXCL_UP, g_hInst, nullptr);
         g_btnExclDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXCL_DOWN, g_hInst, nullptr);
-        g_btnLoadExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_EXCL, g_hInst, nullptr);
-        g_btnSaveExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_EXCL, g_hInst, nullptr);
+        g_btnLoadExcl = CreateWindowW(L"BUTTON", L"設定読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_EXCL, g_hInst, nullptr);
+        g_btnSaveExcl = CreateWindowW(L"BUTTON", L"設定保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_EXCL, g_hInst, nullptr);
 
         g_editExclPattern = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_EXCL_PATTERN, g_hInst, nullptr);
         g_btnAddPattern = CreateWindowW(L"BUTTON", L"追加", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_ADD_PATTERN, g_hInst, nullptr);
@@ -3823,8 +3823,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_btnFNameDown = CreateWindowW(L"BUTTON", L"下へ", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FNAME_DOWN, g_hInst, nullptr);
         g_listFName = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_FNAME, g_hInst, nullptr);
 
-        g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
-        g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
+        g_btnLoadFNameExcl = CreateWindowW(L"BUTTON", L"設定読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_FNAME_EXCL, g_hInst, nullptr);
+        g_btnSaveFNameExcl = CreateWindowW(L"BUTTON", L"設定保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_FNAME_EXCL, g_hInst, nullptr);
 
         // 拡張子グループ
         CreateWindowW(L"BUTTON", L"対象拡張子", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 0, 0, 0, hwnd, (HMENU)IDC_GRP_EXT, g_hInst, nullptr);
