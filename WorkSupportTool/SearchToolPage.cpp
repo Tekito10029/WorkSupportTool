@@ -321,6 +321,8 @@ static HWND g_staticFilter = nullptr;
 static HWND g_editFilter = nullptr;
 static HWND g_staticResultDetail = nullptr;
 static int g_visibleCount = 0;
+static bool g_deferExcludeListRefresh = false;
+static bool g_deferFileNameListRefresh = false;
 
 static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
@@ -397,6 +399,7 @@ static fs::path NormalizePath(const fs::path& p);
 static void RefreshFileNameListBox();
 static void RebuildFileNameExcludeCache();
 static void SaveSettings();
+static void RedrawListBoxIfVisible(HWND hwnd);
 // -------------------------------------------------------
 
 // ---- ルート一覧補助関数（複数フォルダーを直感的に扱う） ----
@@ -469,6 +472,7 @@ static std::vector<RootEntry> GetRootEntriesFromListBox()
 static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
 {
     if (!g_listRoots) return;
+    SendMessageW(g_listRoots, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listRoots, LB_RESETCONTENT, 0, 0);
     for (const auto& e : entries) {
         auto t = Trim(e.path);
@@ -476,6 +480,8 @@ static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
         auto disp = BuildRootDisplayText(t, e.enabled);
         SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
     }
+    SendMessageW(g_listRoots, WM_SETREDRAW, TRUE, 0);
+    RedrawListBoxIfVisible(g_listRoots);
 }
 
 static std::vector<std::wstring> GetEnabledRootsFromListBox()
@@ -983,11 +989,15 @@ static std::wstring FolderRuleToDisplay(const ExcludeRule& r) {
     }
 }
 static void RefreshExcludeListBox() {
+    if (g_deferExcludeListRefresh || !g_listExcludes) return;
+    SendMessageW(g_listExcludes, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listExcludes, LB_RESETCONTENT, 0, 0);
     for (const auto& r : g_excludeRules) {
         auto disp = FolderRuleToDisplay(r);
         SendMessageW(g_listExcludes, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
     }
+    SendMessageW(g_listExcludes, WM_SETREDRAW, TRUE, 0);
+    RedrawListBoxIfVisible(g_listExcludes);
 }
 static bool IsExcludedDir(const fs::path& dirNorm) {
     const std::wstring dirStr = dirNorm.wstring();
@@ -1306,10 +1316,14 @@ static void RebuildFileNameExcludeCache() {
     }
 }
 static void RefreshFileNameListBox() {
+    if (g_deferFileNameListRefresh || !g_listFName) return;
+    SendMessageW(g_listFName, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listFName, LB_RESETCONTENT, 0, 0);
     for (const auto& s : g_fileNamePatterns) {
         SendMessageW(g_listFName, LB_ADDSTRING, 0, (LPARAM)s.c_str());
     }
+    SendMessageW(g_listFName, WM_SETREDRAW, TRUE, 0);
+    RedrawListBoxIfVisible(g_listFName);
 }
 static bool IsExcludedByFileName(const fs::path& p) {
     std::wstring name = p.filename().wstring();
@@ -2923,6 +2937,32 @@ static void PaintSearchBackground(HWND hwnd, HDC hdc) {
 
 static void DoLayout(HWND hwnd); // 前方宣言
 
+static RECT GetLeftPaneInvalidRect(HWND hwnd) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    const int padding = 12;
+    int winW = rc.right - rc.left;
+    int minRightW = 440;
+    int leftW = 560;
+    if (winW < leftW + minRightW + padding * 3) {
+        leftW = max(320, winW - (minRightW + padding * 3));
+    }
+    int rightX = leftW + padding * 3;
+    return RECT{ 0, 0, min(rightX, rc.right), rc.bottom };
+}
+
+static void InvalidateLeftPane(HWND hwnd) {
+    if (!hwnd) return;
+    RECT leftPane = GetLeftPaneInvalidRect(hwnd);
+    InvalidateRect(hwnd, &leftPane, TRUE);
+}
+
+static void RedrawListBoxIfVisible(HWND hwnd) {
+    if (!hwnd || !IsWindowVisible(hwnd)) return;
+    InvalidateRect(hwnd, nullptr, TRUE);
+    UpdateWindow(hwnd);
+}
+
 // -------------------- 左タブ（検索 / 除外） --------------------
 static void ApplyLeftTabVisibility() {
     bool isSearch = (g_leftTab == 0);
@@ -3005,7 +3045,7 @@ static void SetLeftTab(int tab, bool saveIni = true) {
     ApplyLeftTabVisibility();
     if (g_hwndMain) {
         DoLayout(g_hwndMain);
-        InvalidateRect(g_hwndMain, nullptr, TRUE);
+        InvalidateLeftPane(g_hwndMain);
     }
     if (saveIni) {
         IniWriteInt(L"View", L"LeftTab", g_leftTab);
@@ -3315,6 +3355,7 @@ static void LoadSearchPreset() {
     SetChecked(g_chkNameIncludeExt, IniReadInt(sec.c_str(), L"NameIncludeExt", 1) != 0);
     SetWindowTextWStr(g_editFilter, IniReadStr(sec.c_str(), L"ResultFilter", L""));
 
+    g_deferExcludeListRefresh = true;
     g_excludeRules.clear();
     int exclCount = IniReadInt(sec.c_str(), L"ExcludeCount", 0);
     for (int i = 0; i < exclCount; ++i) {
@@ -3324,8 +3365,10 @@ static void LoadSearchPreset() {
         if (type == 0) AddExcludeDirPrefix(raw);
         else AddOrUpdateExcludePatternOrSubstring(raw, -1);
     }
+    g_deferExcludeListRefresh = false;
     RefreshExcludeListBox();
 
+    g_deferFileNameListRefresh = true;
     g_fileNamePatterns.clear();
     int nameCount = IniReadInt(sec.c_str(), L"NameCount", 0);
     for (int i = 0; i < nameCount; ++i) {
@@ -3333,6 +3376,7 @@ static void LoadSearchPreset() {
         if (!v.empty()) g_fileNamePatterns.push_back(v);
     }
     if (g_fileNamePatterns.empty()) g_fileNamePatterns.push_back(L"~$");
+    g_deferFileNameListRefresh = false;
     RefreshFileNameListBox();
     RebuildFileNameExcludeCache();
 
