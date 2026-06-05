@@ -2922,6 +2922,22 @@ static void PaintSearchBackground(HWND hwnd, HDC hdc) {
 
 static void DoLayout(HWND hwnd); // 前方宣言
 
+static void RedrawLeftPaneAfterVisibilityChange() {
+    if (!g_hwndMain) return;
+    RECT rc{};
+    GetClientRect(g_hwndMain, &rc);
+    const int padding = 12;
+    int winW = rc.right - rc.left;
+    int minRightW = 440;
+    int leftW = 560;
+    if (winW < leftW + minRightW + padding * 3) {
+        leftW = max(320, winW - (minRightW + padding * 3));
+    }
+    int rightX = leftW + padding * 3;
+    RECT leftPane{ 0, 0, min(rightX, rc.right), rc.bottom };
+    RedrawWindow(g_hwndMain, &leftPane, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
 // -------------------- 左タブ（検索 / 除外） --------------------
 static void ApplyLeftTabVisibility() {
     bool isSearch = (g_leftTab == 0);
@@ -2983,7 +2999,8 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_btnAddPattern, swExcl);
 
     ShowWindow(g_staticExclName, swExcl);
-    ShowWindow(g_chkEnableNameExcl, swExcl);    ShowWindow(g_editFNamePattern, swExcl);
+    ShowWindow(g_chkEnableNameExcl, swExcl);
+    ShowWindow(g_editFNamePattern, swExcl);
     ShowWindow(g_btnAddFName, swExcl);
     ShowWindow(g_btnRemoveFName, swExcl);
     ShowWindow(g_btnFNameUp, swExcl);
@@ -2994,6 +3011,7 @@ static void ApplyLeftTabVisibility() {
 
     // 表示中のコントロールの有効/無効状態を整合させる
     UpdateUiEnableStates();
+    RedrawLeftPaneAfterVisibilityChange();
 }
 
 static void SetLeftTab(int tab, bool saveIni = true) {
@@ -3334,7 +3352,11 @@ static void LoadSearchPreset() {
     RefreshFileNameListBox();
     RebuildFileNameExcludeCache();
 
-    UpdateUiEnableStates();
+    ApplyLeftTabVisibility();
+    if (g_hwndMain) {
+        DoLayout(g_hwndMain);
+        RedrawLeftPaneAfterVisibilityChange();
+    }
     SetListViewTimeHeader(GetTimeBase());
     RebuildListViewFromResults();
     SaveSettings();

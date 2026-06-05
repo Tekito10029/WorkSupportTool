@@ -172,6 +172,25 @@ namespace {
         SendMessageW(hwnd, LB_SETITEMHEIGHT, 0, itemHeight);
     }
 
+    static LRESULT CALLBACK LogEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+        UINT_PTR, DWORD_PTR) {
+        switch (msg) {
+        case WM_ERASEBKGND:
+        {
+            EnsureThemeBrushes();
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc,
+                g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+            return 1;
+        }
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, LogEditProc, 1);
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+
     static void DrawRoundedRect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int radius);
 
     static void UpdateHotControl(HWND& hotControl, HWND hwnd, bool hot) {
@@ -774,6 +793,7 @@ namespace {
         SendMessageW(g_editLog, EM_SETSEL, (WPARAM)len, (LPARAM)len);
         std::wstring text = line + L"\r\n";
         SendMessageW(g_editLog, EM_REPLACESEL, FALSE, (LPARAM)text.c_str());
+        RedrawWindow(g_editLog, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
     }
 
     void RefreshFileList() {
@@ -2109,6 +2129,7 @@ namespace {
                 L"プリンタ・用紙・部数は「印刷を実行」で選択します。\r\n",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_LOG, g_hInst, nullptr);
+            SetWindowSubclass(g_editLog, LogEditProc, 1, 0);
 
             ShowWindow(g_staticCopies, SW_HIDE);
             ShowWindow(g_editCopies, SW_HIDE);
@@ -2173,6 +2194,12 @@ namespace {
         {
             HDC hdc = reinterpret_cast<HDC>(wParam);
             HWND ctrl = reinterpret_cast<HWND>(lParam);
+            if (ctrl == g_editLog) {
+                SetBkMode(hdc, OPAQUE);
+                SetBkColor(hdc, Theme::CardBg);
+                SetTextColor(hdc, Theme::Text);
+                return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+            }
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, ctrl == g_staticSheetsHint || ctrl == g_staticRemoveTarget ? Theme::MutedText : Theme::Text);
             return reinterpret_cast<LRESULT>(g_hBrushCardBg ? g_hBrushCardBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
@@ -2191,9 +2218,11 @@ namespace {
         case WM_CTLCOLORLISTBOX:
         {
             HDC hdc = reinterpret_cast<HDC>(wParam);
+            HWND ctrl = reinterpret_cast<HWND>(lParam);
+            SetBkMode(hdc, OPAQUE);
             SetBkColor(hdc, Theme::CardBg);
             SetTextColor(hdc, Theme::Text);
-            return reinterpret_cast<LRESULT>(g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+            return reinterpret_cast<LRESULT>((ctrl == g_editLog && g_hBrushEditBg) ? g_hBrushEditBg : (g_hBrushEditBg ? g_hBrushEditBg : reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH))));
         }
 
         case WM_DRAWITEM:
