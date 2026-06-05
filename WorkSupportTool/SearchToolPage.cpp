@@ -2249,12 +2249,9 @@ static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
         }
     }
     if (text.empty()) {
-        int len = GetWindowTextLengthW(hwnd);
-        if (len > 0) {
-            std::vector<wchar_t> buf(static_cast<size_t>(len) + 1, L'\0');
-            GetWindowTextW(hwnd, buf.data(), len + 1);
-            text.assign(buf.data());
-        }
+        wchar_t windowText[256]{};
+        GetWindowTextW(hwnd, windowText, static_cast<int>(std::size(windowText)));
+        text = windowText;
     }
     if (text.empty() && hwnd == g_cmbPreset) {
         text = L"例: 月次検索";
