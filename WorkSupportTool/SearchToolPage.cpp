@@ -2248,6 +2248,18 @@ static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
             SendMessageW(hwnd, CB_GETLBTEXT, sel, reinterpret_cast<LPARAM>(text.data()));
         }
     }
+    if (text.empty()) {
+        int len = GetWindowTextLengthW(hwnd);
+        if (len > 0) {
+            std::vector<wchar_t> buf(static_cast<size_t>(len) + 1, L'\0');
+            GetWindowTextW(hwnd, buf.data(), len + 1);
+            text.assign(buf.data());
+        }
+    }
+    if (text.empty() && hwnd == g_cmbPreset) {
+        text = L"例: 月次検索";
+        textColor = disabled ? Theme::DisabledText : Theme::MutedText;
+    }
 
     RECT textRc = boxRc;
     textRc.left += 10;
@@ -2309,6 +2321,7 @@ static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
     case WM_LBUTTONUP:
         InvalidateRect(hwnd, nullptr, TRUE);
         break;
+    case WM_SETTEXT:
     case CB_SETCURSEL:
     case CB_RESETCONTENT:
     case CB_ADDSTRING:
@@ -4462,7 +4475,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"作成日時");
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新OR作成");
 
-        g_cmbPreset = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWN | CBS_HASSTRINGS | WS_VSCROLL,
+        g_cmbPreset = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWN | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PRESET, g_hInst, nullptr);
         SendMessageW(g_cmbPreset, EM_SETCUEBANNER, TRUE, (LPARAM)L"例: 月次検索");
         g_btnPresetSave = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRESET_SAVE, g_hInst, nullptr);
@@ -4629,7 +4642,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         ApplyModernListBox(g_listFName);
         ApplyModernComboBox(g_cmbMode);
         ApplyModernComboBox(g_cmbTimeBase);
-        ApplyModernControlTheme(g_cmbPreset);
+        ApplyModernComboBox(g_cmbPreset);
         ApplyModernResultsListView(g_listResults);
 
         HWND modernCheckBoxes[] = {
