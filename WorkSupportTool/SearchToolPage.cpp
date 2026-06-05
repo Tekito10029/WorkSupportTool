@@ -7,6 +7,7 @@
 #endif
 
 #include "SearchToolPage.h"
+#include "PrintToolPage.h"
 #include <windows.h>
 #include <windowsx.h>   // マウス座標取得用マクロ
 #include <commctrl.h>
@@ -86,6 +87,13 @@ enum : int {
     IDC_STATIC_TIMEBASE,
     IDC_CMB_TIMEBASE,
 
+    // 検索条件プリセット
+    IDC_STATIC_PRESET,
+    IDC_CMB_PRESET,
+    IDC_BTN_PRESET_SAVE,
+    IDC_BTN_PRESET_LOAD,
+    IDC_BTN_PRESET_DELETE,
+
     // 拡張子
     IDC_GRP_EXT,
     IDC_CHK_XLS,
@@ -141,6 +149,7 @@ enum : int {
     // 結果フィルター
     IDC_STATIC_FILTER,
     IDC_EDIT_FILTER,
+    IDC_STATIC_RESULT_DETAIL,
 
     // カレンダー範囲
     IDC_STATIC_FROM,
@@ -174,6 +183,8 @@ enum : int {
     CMD_FNAME_DOWN,
     CMD_FNAME_LOAD,
     CMD_FNAME_SAVE,
+
+    CMD_RESULT_ADD_TO_PRINT = 41001,
 };
 
 static const UINT WM_APP_ADD_HIT = WM_APP + 1;
@@ -254,6 +265,12 @@ static HWND g_editDays = nullptr;
 
 static HWND g_cmbTimeBase = nullptr;  // 0: 更新日時, 1: 作成日時, 2: 更新OR作成
 
+static HWND g_staticPreset = nullptr;
+static HWND g_cmbPreset = nullptr;
+static HWND g_btnPresetSave = nullptr;
+static HWND g_btnPresetLoad = nullptr;
+static HWND g_btnPresetDelete = nullptr;
+
 static HWND g_chkXls = nullptr;
 static HWND g_chkXlsx = nullptr;
 static HWND g_chkXlsm = nullptr;
@@ -302,7 +319,33 @@ static HWND g_status = nullptr;
 // 結果フィルター
 static HWND g_staticFilter = nullptr;
 static HWND g_editFilter = nullptr;
+static HWND g_staticResultDetail = nullptr;
 static int g_visibleCount = 0;
+static bool g_deferExcludeListRefresh = false;
+static bool g_deferFileNameListRefresh = false;
+static bool g_excludeListDirty = false;
+static bool g_fileNameListDirty = false;
+static bool g_loadingPreset = false;
+
+struct SearchCheckState {
+    bool xls = true;
+    bool xlsx = true;
+    bool xlsm = true;
+    bool xlsb = true;
+    bool xltx = true;
+    bool xltm = true;
+    bool nameIncludeExt = true;
+    bool dirty = false;
+};
+
+struct ExclusionCheckState {
+    bool enableFolder = true;
+    bool enableName = true;
+    bool dirty = false;
+};
+
+static SearchCheckState g_searchCheckState;
+static ExclusionCheckState g_exclusionCheckState;
 
 static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
@@ -379,6 +422,7 @@ static fs::path NormalizePath(const fs::path& p);
 static void RefreshFileNameListBox();
 static void RebuildFileNameExcludeCache();
 static void SaveSettings();
+static void RedrawListBoxIfVisible(HWND hwnd);
 // -------------------------------------------------------
 
 // ---- ルート一覧補助関数（複数フォルダーを直感的に扱う） ----
@@ -428,8 +472,13 @@ struct RootEntry {
     bool enabled = true;
 };
 
+static std::vector<RootEntry> g_pendingRootEntries;
+static bool g_rootListDirty = false;
+
 static std::vector<RootEntry> GetRootEntriesFromListBox()
 {
+    if (g_rootListDirty) return g_pendingRootEntries;
+
     std::vector<RootEntry> out;
     if (!g_listRoots) return out;
 
@@ -448,9 +497,11 @@ static std::vector<RootEntry> GetRootEntriesFromListBox()
     return out;
 }
 
-static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
+static void ApplyRootEntriesToListBoxNow(const std::vector<RootEntry>& entries)
 {
     if (!g_listRoots) return;
+
+    SendMessageW(g_listRoots, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listRoots, LB_RESETCONTENT, 0, 0);
     for (const auto& e : entries) {
         auto t = Trim(e.path);
@@ -458,6 +509,20 @@ static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
         auto disp = BuildRootDisplayText(t, e.enabled);
         SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
     }
+    SendMessageW(g_listRoots, WM_SETREDRAW, TRUE, 0);
+    g_rootListDirty = false;
+    RedrawListBoxIfVisible(g_listRoots);
+}
+
+static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
+{
+    if (!g_listRoots || g_leftTab != 0) {
+        g_pendingRootEntries = entries;
+        g_rootListDirty = true;
+        return;
+    }
+
+    ApplyRootEntriesToListBoxNow(entries);
 }
 
 static std::vector<std::wstring> GetEnabledRootsFromListBox()
@@ -581,8 +646,106 @@ static std::wstring GetWindowTextWStr(HWND h) {
     return s;
 }
 static void SetWindowTextWStr(HWND h, const std::wstring& s) { SetWindowTextW(h, s.c_str()); }
-static bool IsChecked(HWND hChk) { return (SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED); }
-static void SetChecked(HWND hChk, bool v) { SendMessageW(hChk, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0); }
+static bool IsSearchTabCheckBox(HWND hChk)
+{
+    return hChk == g_chkXls || hChk == g_chkXlsx || hChk == g_chkXlsm ||
+        hChk == g_chkXlsb || hChk == g_chkXltx || hChk == g_chkXltm ||
+        hChk == g_chkNameIncludeExt;
+}
+
+static bool IsExclusionTabCheckBox(HWND hChk)
+{
+    return hChk == g_chkEnableFolderExcl || hChk == g_chkEnableNameExcl;
+}
+
+static bool GetStoredCheckValue(HWND hChk, bool& out)
+{
+    if (hChk == g_chkXls) { out = g_searchCheckState.xls; return true; }
+    if (hChk == g_chkXlsx) { out = g_searchCheckState.xlsx; return true; }
+    if (hChk == g_chkXlsm) { out = g_searchCheckState.xlsm; return true; }
+    if (hChk == g_chkXlsb) { out = g_searchCheckState.xlsb; return true; }
+    if (hChk == g_chkXltx) { out = g_searchCheckState.xltx; return true; }
+    if (hChk == g_chkXltm) { out = g_searchCheckState.xltm; return true; }
+    if (hChk == g_chkNameIncludeExt) { out = g_searchCheckState.nameIncludeExt; return true; }
+    if (hChk == g_chkEnableFolderExcl) { out = g_exclusionCheckState.enableFolder; return true; }
+    if (hChk == g_chkEnableNameExcl) { out = g_exclusionCheckState.enableName; return true; }
+    return false;
+}
+
+static bool StoreCheckValue(HWND hChk, bool v)
+{
+    if (hChk == g_chkXls) { g_searchCheckState.xls = v; return true; }
+    if (hChk == g_chkXlsx) { g_searchCheckState.xlsx = v; return true; }
+    if (hChk == g_chkXlsm) { g_searchCheckState.xlsm = v; return true; }
+    if (hChk == g_chkXlsb) { g_searchCheckState.xlsb = v; return true; }
+    if (hChk == g_chkXltx) { g_searchCheckState.xltx = v; return true; }
+    if (hChk == g_chkXltm) { g_searchCheckState.xltm = v; return true; }
+    if (hChk == g_chkNameIncludeExt) { g_searchCheckState.nameIncludeExt = v; return true; }
+    if (hChk == g_chkEnableFolderExcl) { g_exclusionCheckState.enableFolder = v; return true; }
+    if (hChk == g_chkEnableNameExcl) { g_exclusionCheckState.enableName = v; return true; }
+    return false;
+}
+
+static bool IsChecked(HWND hChk)
+{
+    if (!hChk) return false;
+
+    bool stored = false;
+    if (GetStoredCheckValue(hChk, stored)) {
+        bool hiddenSearchCheck = IsSearchTabCheckBox(hChk) && (g_leftTab != 0 || g_searchCheckState.dirty);
+        bool hiddenExclusionCheck = IsExclusionTabCheckBox(hChk) && (g_leftTab != 1 || g_exclusionCheckState.dirty);
+        if (hiddenSearchCheck || hiddenExclusionCheck) return stored;
+
+        bool actual = (SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        StoreCheckValue(hChk, actual);
+        return actual;
+    }
+
+    return (SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+}
+
+static void SetCheckedNow(HWND hChk, bool v)
+{
+    if (!hChk) return;
+    SendMessageW(hChk, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+static void SetChecked(HWND hChk, bool v)
+{
+    if (!hChk) return;
+
+    if (StoreCheckValue(hChk, v)) {
+        if (IsSearchTabCheckBox(hChk) && g_leftTab != 0) {
+            g_searchCheckState.dirty = true;
+            return;
+        }
+        if (IsExclusionTabCheckBox(hChk) && g_leftTab != 1) {
+            g_exclusionCheckState.dirty = true;
+            return;
+        }
+    }
+
+    SetCheckedNow(hChk, v);
+}
+
+static void ApplySearchCheckBoxesNow()
+{
+    SetCheckedNow(g_chkXls, g_searchCheckState.xls);
+    SetCheckedNow(g_chkXlsx, g_searchCheckState.xlsx);
+    SetCheckedNow(g_chkXlsm, g_searchCheckState.xlsm);
+    SetCheckedNow(g_chkXlsb, g_searchCheckState.xlsb);
+    SetCheckedNow(g_chkXltx, g_searchCheckState.xltx);
+    SetCheckedNow(g_chkXltm, g_searchCheckState.xltm);
+    SetCheckedNow(g_chkNameIncludeExt, g_searchCheckState.nameIncludeExt);
+    g_searchCheckState.dirty = false;
+}
+
+static void ApplyExclusionCheckBoxesNow()
+{
+    SetCheckedNow(g_chkEnableFolderExcl, g_exclusionCheckState.enableFolder);
+    SetCheckedNow(g_chkEnableNameExcl, g_exclusionCheckState.enableName);
+    g_exclusionCheckState.dirty = false;
+}
 
 static void SetStatus(const std::wstring& s) { if (g_status) SendMessageW(g_status, SB_SETTEXTW, 0, (LPARAM)s.c_str()); }
 
@@ -965,11 +1128,21 @@ static std::wstring FolderRuleToDisplay(const ExcludeRule& r) {
     }
 }
 static void RefreshExcludeListBox() {
+    if (g_deferExcludeListRefresh || !g_listExcludes) return;
+    if (g_leftTab != 1) {
+        g_excludeListDirty = true;
+        return;
+    }
+
+    SendMessageW(g_listExcludes, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listExcludes, LB_RESETCONTENT, 0, 0);
     for (const auto& r : g_excludeRules) {
         auto disp = FolderRuleToDisplay(r);
         SendMessageW(g_listExcludes, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
     }
+    SendMessageW(g_listExcludes, WM_SETREDRAW, TRUE, 0);
+    g_excludeListDirty = false;
+    RedrawListBoxIfVisible(g_listExcludes);
 }
 static bool IsExcludedDir(const fs::path& dirNorm) {
     const std::wstring dirStr = dirNorm.wstring();
@@ -1288,10 +1461,20 @@ static void RebuildFileNameExcludeCache() {
     }
 }
 static void RefreshFileNameListBox() {
+    if (g_deferFileNameListRefresh || !g_listFName) return;
+    if (g_leftTab != 1) {
+        g_fileNameListDirty = true;
+        return;
+    }
+
+    SendMessageW(g_listFName, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listFName, LB_RESETCONTENT, 0, 0);
     for (const auto& s : g_fileNamePatterns) {
         SendMessageW(g_listFName, LB_ADDSTRING, 0, (LPARAM)s.c_str());
     }
+    SendMessageW(g_listFName, WM_SETREDRAW, TRUE, 0);
+    g_fileNameListDirty = false;
+    RedrawListBoxIfVisible(g_listFName);
 }
 static bool IsExcludedByFileName(const fs::path& p) {
     std::wstring name = p.filename().wstring();
@@ -1439,12 +1622,15 @@ static void SetListViewTimeHeader(TimeBase tb) {
     ListView_SetColumn(g_listResults, 0, &col);
 }
 
+static void UpdateResultDetailFromSelection();
+
 static void ClearResultsUI() {
     g_results.clear();
     g_visibleResultIndices.clear();
     g_visibleCount = 0;
     ListView_DeleteAllItems(g_listResults);
     UpdateExportButtonEnabled();
+    UpdateResultDetailFromSelection();
 }
 
 static void AddResultToUI(std::unique_ptr<Hit> hit) {
@@ -1498,6 +1684,7 @@ static void RebuildListViewFromResults() {
         g_visibleCount++;
     }
     UpdateExportButtonEnabled();
+    UpdateResultDetailFromSelection();
 }
 
 static void SortResults(int col, bool asc) {
@@ -1927,6 +2114,7 @@ static void DrawModernCheckBoxFace(HWND hwnd, HDC hdc) {
 }
 
 static void RedrawModernCheckBoxNow(HWND hwnd) {
+    if (!hwnd || !IsWindowVisible(hwnd)) return;
     RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 
@@ -2060,6 +2248,18 @@ static void DrawModernComboBoxFace(HWND hwnd, HDC hdc) {
             SendMessageW(hwnd, CB_GETLBTEXT, sel, reinterpret_cast<LPARAM>(text.data()));
         }
     }
+    if (text.empty()) {
+        int len = GetWindowTextLengthW(hwnd);
+        if (len > 0) {
+            std::vector<wchar_t> buf(static_cast<size_t>(len) + 1, L'\0');
+            GetWindowTextW(hwnd, buf.data(), len + 1);
+            text.assign(buf.data());
+        }
+    }
+    if (text.empty() && hwnd == g_cmbPreset) {
+        text = L"例: 月次検索";
+        textColor = disabled ? Theme::DisabledText : Theme::MutedText;
+    }
 
     RECT textRc = boxRc;
     textRc.left += 10;
@@ -2121,6 +2321,7 @@ static LRESULT CALLBACK ModernComboBoxProc(HWND hwnd, UINT msg, WPARAM wParam, L
     case WM_LBUTTONUP:
         InvalidateRect(hwnd, nullptr, TRUE);
         break;
+    case WM_SETTEXT:
     case CB_SETCURSEL:
     case CB_RESETCONTENT:
     case CB_ADDSTRING:
@@ -2900,8 +3101,34 @@ static void PaintSearchBackground(HWND hwnd, HDC hdc) {
 
 static void DoLayout(HWND hwnd); // 前方宣言
 
+static RECT GetLeftPaneInvalidRect(HWND hwnd) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    const int padding = 12;
+    int winW = rc.right - rc.left;
+    int minRightW = 440;
+    int leftW = 560;
+    if (winW < leftW + minRightW + padding * 3) {
+        leftW = max(320, winW - (minRightW + padding * 3));
+    }
+    int rightX = leftW + padding * 3;
+    return RECT{ 0, 0, min(rightX, rc.right), rc.bottom };
+}
+
+static void InvalidateLeftPane(HWND hwnd) {
+    if (!hwnd) return;
+    RECT leftPane = GetLeftPaneInvalidRect(hwnd);
+    InvalidateRect(hwnd, &leftPane, TRUE);
+}
+
+static void RedrawListBoxIfVisible(HWND hwnd) {
+    if (!hwnd || !IsWindowVisible(hwnd)) return;
+    InvalidateRect(hwnd, nullptr, TRUE);
+    UpdateWindow(hwnd);
+}
+
 // -------------------- 左タブ（検索 / 除外） --------------------
-static void ApplyLeftTabVisibility() {
+static void ApplyLeftTabVisibility(bool refreshDirtyExclusionUi = true) {
     bool isSearch = (g_leftTab == 0);
     int swSearch = isSearch ? SW_SHOW : SW_HIDE;
     int swExcl = isSearch ? SW_HIDE : SW_SHOW;
@@ -2922,6 +3149,11 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_editDays, swSearch);
     ShowWindow(g_staticTimeBase, swSearch);
     ShowWindow(g_cmbTimeBase, swSearch);
+    ShowWindow(g_staticPreset, swSearch);
+    ShowWindow(g_cmbPreset, swSearch);
+    ShowWindow(g_btnPresetSave, swSearch);
+    ShowWindow(g_btnPresetLoad, swSearch);
+    ShowWindow(g_btnPresetDelete, swSearch);
 
     ShowWindow(g_staticFrom, swSearch);
     ShowWindow(g_staticTo, swSearch);
@@ -2956,7 +3188,8 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_btnAddPattern, swExcl);
 
     ShowWindow(g_staticExclName, swExcl);
-    ShowWindow(g_chkEnableNameExcl, swExcl);    ShowWindow(g_editFNamePattern, swExcl);
+    ShowWindow(g_chkEnableNameExcl, swExcl);
+    ShowWindow(g_editFNamePattern, swExcl);
     ShowWindow(g_btnAddFName, swExcl);
     ShowWindow(g_btnRemoveFName, swExcl);
     ShowWindow(g_btnFNameUp, swExcl);
@@ -2964,6 +3197,18 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_listFName, swExcl);
     ShowWindow(g_btnLoadFNameExcl, swExcl);
     ShowWindow(g_btnSaveFNameExcl, swExcl);
+
+    if (isSearch) {
+        if (g_searchCheckState.dirty) ApplySearchCheckBoxesNow();
+        if (g_rootListDirty) ApplyRootEntriesToListBoxNow(g_pendingRootEntries);
+    }
+    else {
+        if (g_exclusionCheckState.dirty) ApplyExclusionCheckBoxesNow();
+        if (refreshDirtyExclusionUi) {
+            if (g_excludeListDirty) RefreshExcludeListBox();
+            if (g_fileNameListDirty) RefreshFileNameListBox();
+        }
+    }
 
     // 表示中のコントロールの有効/無効状態を整合させる
     UpdateUiEnableStates();
@@ -2976,7 +3221,7 @@ static void SetLeftTab(int tab, bool saveIni = true) {
     ApplyLeftTabVisibility();
     if (g_hwndMain) {
         DoLayout(g_hwndMain);
-        InvalidateRect(g_hwndMain, nullptr, TRUE);
+        InvalidateLeftPane(g_hwndMain);
     }
     if (saveIni) {
         IniWriteInt(L"View", L"LeftTab", g_leftTab);
@@ -2984,6 +3229,11 @@ static void SetLeftTab(int tab, bool saveIni = true) {
 }
 
 // -------------------- 設定の読み込み/保存 --------------------
+static void RefreshPresetCombo(const std::wstring& selectName = L"");
+static void SaveSearchPreset();
+static void LoadSearchPreset();
+static void DeleteSearchPreset();
+
 static void LoadSettings() {
     std::vector<RootEntry> entries;
 
@@ -3071,6 +3321,7 @@ static void LoadSettings() {
     RefreshFileNameListBox();
     RebuildFileNameExcludeCache();
 
+    RefreshPresetCombo();
     ApplyLeftTabVisibility();
     UpdateUiEnableStates();
     SetListViewTimeHeader(GetTimeBase());
@@ -3149,6 +3400,180 @@ static void SaveSettings() {
     SaveExcludesToFile(g_lastExcludeFile);
 }
 
+static std::wstring GetPresetSection(const std::wstring& name) {
+    std::wstring safe = Trim(name);
+    for (auto& ch : safe) {
+        if (ch == L'[' || ch == L']' || ch == L'\r' || ch == L'\n') ch = L'_';
+    }
+    return L"SearchPreset_" + safe;
+}
+
+static std::wstring GetCurrentPresetName() {
+    if (!g_cmbPreset) return L"";
+    return Trim(GetWindowTextWStr(g_cmbPreset));
+}
+
+static std::vector<std::wstring> GetPresetNames() {
+    std::vector<std::wstring> names;
+    int n = IniReadInt(L"SearchPresets", L"Count", 0);
+    for (int i = 0; i < n; ++i) {
+        std::wstring key = L"Name" + std::to_wstring(i);
+        auto name = Trim(IniReadStr(L"SearchPresets", key.c_str(), L""));
+        if (!name.empty()) names.push_back(name);
+    }
+    names.erase(std::remove_if(names.begin(), names.end(), [](const std::wstring& s) { return Trim(s).empty(); }), names.end());
+    std::sort(names.begin(), names.end(), [](const auto& a, const auto& b) { return ToLower(a) < ToLower(b); });
+    names.erase(std::unique(names.begin(), names.end(), [](const auto& a, const auto& b) { return ToLower(a) == ToLower(b); }), names.end());
+    return names;
+}
+
+static void SavePresetNames(const std::vector<std::wstring>& names) {
+    int oldCount = IniReadInt(L"SearchPresets", L"Count", 0);
+    IniWriteInt(L"SearchPresets", L"Count", (int)names.size());
+    int maxCount = max(oldCount, (int)names.size());
+    for (int i = 0; i < maxCount; ++i) {
+        std::wstring key = L"Name" + std::to_wstring(i);
+        if (i < (int)names.size()) IniWriteStr(L"SearchPresets", key.c_str(), names[(size_t)i]);
+        else WritePrivateProfileStringW(L"SearchPresets", key.c_str(), nullptr, g_iniPath.c_str());
+    }
+}
+
+static void RefreshPresetCombo(const std::wstring& selectName) {
+    if (!g_cmbPreset) return;
+    std::wstring keep = selectName.empty() ? GetCurrentPresetName() : selectName;
+    ComboBox_ResetContent(g_cmbPreset);
+    for (const auto& name : GetPresetNames()) {
+        ComboBox_AddString(g_cmbPreset, name.c_str());
+    }
+    if (!keep.empty()) SetWindowTextW(g_cmbPreset, keep.c_str());
+}
+
+static void SaveSearchPreset() {
+    std::wstring name = GetCurrentPresetName();
+    if (name.empty()) {
+        MessageBoxW(g_hwndMain, L"プリセット名を入力してください。", L"検索条件プリセット", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    auto names = GetPresetNames();
+    if (std::none_of(names.begin(), names.end(), [&](const auto& s) { return ToLower(s) == ToLower(name); })) {
+        names.push_back(name);
+        std::sort(names.begin(), names.end(), [](const auto& a, const auto& b) { return ToLower(a) < ToLower(b); });
+        SavePresetNames(names);
+    }
+
+    const std::wstring sec = GetPresetSection(name);
+    auto rootEntries = GetRootEntriesFromListBox();
+    IniWriteInt(sec.c_str(), L"RootsCount", (int)rootEntries.size());
+    for (int i = 0; i < (int)rootEntries.size(); ++i) {
+        IniWriteStr(sec.c_str(), (L"RootPath" + std::to_wstring(i)).c_str(), rootEntries[(size_t)i].path);
+        IniWriteInt(sec.c_str(), (L"RootEnabled" + std::to_wstring(i)).c_str(), rootEntries[(size_t)i].enabled ? 1 : 0);
+    }
+    IniWriteInt(sec.c_str(), L"Mode", GetMode());
+    IniWriteStr(sec.c_str(), L"Days", GetWindowTextWStr(g_editDays));
+    IniWriteInt(sec.c_str(), L"TimeBase", (GetTimeBase() == TimeBase::Creation) ? 1 : (GetTimeBase() == TimeBase::Either ? 2 : 0));
+    IniWriteInt(sec.c_str(), L"xls", IsChecked(g_chkXls) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"xlsx", IsChecked(g_chkXlsx) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"xlsm", IsChecked(g_chkXlsm) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"xlsb", IsChecked(g_chkXlsb) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"xltx", IsChecked(g_chkXltx) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"xltm", IsChecked(g_chkXltm) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"EnableFolderExclude", IsChecked(g_chkEnableFolderExcl) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"EnableNameExclude", IsChecked(g_chkEnableNameExcl) ? 1 : 0);
+    IniWriteInt(sec.c_str(), L"NameIncludeExt", IsChecked(g_chkNameIncludeExt) ? 1 : 0);
+    IniWriteStr(sec.c_str(), L"ResultFilter", GetWindowTextWStr(g_editFilter));
+
+    IniWriteInt(sec.c_str(), L"ExcludeCount", (int)g_excludeRules.size());
+    for (int i = 0; i < (int)g_excludeRules.size(); ++i) {
+        const auto& r = g_excludeRules[(size_t)i];
+        IniWriteInt(sec.c_str(), (L"ExcludeType" + std::to_wstring(i)).c_str(), (r.type == ExcludeType::DirPrefix) ? 0 : (r.type == ExcludeType::Wildcard ? 1 : 2));
+        IniWriteStr(sec.c_str(), (L"ExcludeRaw" + std::to_wstring(i)).c_str(), (r.type == ExcludeType::DirPrefix) ? r.dirNorm.wstring() : r.raw);
+    }
+
+    IniWriteInt(sec.c_str(), L"NameCount", (int)g_fileNamePatterns.size());
+    for (int i = 0; i < (int)g_fileNamePatterns.size(); ++i) {
+        IniWriteStr(sec.c_str(), (L"NamePattern" + std::to_wstring(i)).c_str(), g_fileNamePatterns[(size_t)i]);
+    }
+
+    RefreshPresetCombo(name);
+    SetStatus(L"検索条件プリセットを保存しました: " + name);
+}
+
+static void LoadSearchPreset() {
+    std::wstring name = GetCurrentPresetName();
+    if (name.empty()) return;
+    const std::wstring sec = GetPresetSection(name);
+    int rootsCount = IniReadInt(sec.c_str(), L"RootsCount", -1);
+    if (rootsCount < 0) {
+        MessageBoxW(g_hwndMain, L"指定したプリセットが見つかりません。", L"検索条件プリセット", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    g_loadingPreset = true;
+
+    std::vector<RootEntry> roots;
+    for (int i = 0; i < rootsCount; ++i) {
+        auto path = Trim(IniReadStr(sec.c_str(), (L"RootPath" + std::to_wstring(i)).c_str(), L""));
+        bool enabled = IniReadInt(sec.c_str(), (L"RootEnabled" + std::to_wstring(i)).c_str(), 1) != 0;
+        if (!path.empty()) roots.push_back({ path, enabled });
+    }
+    SetRootEntriesToListBox(roots);
+
+    SendMessageW(g_cmbMode, CB_SETCURSEL, (WPARAM)max(0, min(2, IniReadInt(sec.c_str(), L"Mode", 0))), 0);
+    SetWindowTextWStr(g_editDays, IniReadStr(sec.c_str(), L"Days", L"3"));
+    SendMessageW(g_cmbTimeBase, CB_SETCURSEL, (WPARAM)max(0, min(2, IniReadInt(sec.c_str(), L"TimeBase", 0))), 0);
+    SetChecked(g_chkXls, IniReadInt(sec.c_str(), L"xls", 1) != 0);
+    SetChecked(g_chkXlsx, IniReadInt(sec.c_str(), L"xlsx", 1) != 0);
+    SetChecked(g_chkXlsm, IniReadInt(sec.c_str(), L"xlsm", 1) != 0);
+    SetChecked(g_chkXlsb, IniReadInt(sec.c_str(), L"xlsb", 1) != 0);
+    SetChecked(g_chkXltx, IniReadInt(sec.c_str(), L"xltx", 1) != 0);
+    SetChecked(g_chkXltm, IniReadInt(sec.c_str(), L"xltm", 1) != 0);
+    SetChecked(g_chkEnableFolderExcl, IniReadInt(sec.c_str(), L"EnableFolderExclude", 1) != 0);
+    SetChecked(g_chkEnableNameExcl, IniReadInt(sec.c_str(), L"EnableNameExclude", 1) != 0);
+    SetChecked(g_chkNameIncludeExt, IniReadInt(sec.c_str(), L"NameIncludeExt", 1) != 0);
+    SetWindowTextWStr(g_editFilter, IniReadStr(sec.c_str(), L"ResultFilter", L""));
+
+    g_deferExcludeListRefresh = true;
+    g_excludeRules.clear();
+    int exclCount = IniReadInt(sec.c_str(), L"ExcludeCount", 0);
+    for (int i = 0; i < exclCount; ++i) {
+        int type = IniReadInt(sec.c_str(), (L"ExcludeType" + std::to_wstring(i)).c_str(), 2);
+        auto raw = Trim(IniReadStr(sec.c_str(), (L"ExcludeRaw" + std::to_wstring(i)).c_str(), L""));
+        if (raw.empty()) continue;
+        if (type == 0) AddExcludeDirPrefix(raw);
+        else AddOrUpdateExcludePatternOrSubstring(raw, -1);
+    }
+    g_deferExcludeListRefresh = false;
+    g_excludeListDirty = true;
+
+    g_deferFileNameListRefresh = true;
+    g_fileNamePatterns.clear();
+    int nameCount = IniReadInt(sec.c_str(), L"NameCount", 0);
+    for (int i = 0; i < nameCount; ++i) {
+        auto v = Trim(IniReadStr(sec.c_str(), (L"NamePattern" + std::to_wstring(i)).c_str(), L""));
+        if (!v.empty()) g_fileNamePatterns.push_back(v);
+    }
+    if (g_fileNamePatterns.empty()) g_fileNamePatterns.push_back(L"~$");
+    g_deferFileNameListRefresh = false;
+    g_fileNameListDirty = true;
+    RebuildFileNameExcludeCache();
+
+    g_loadingPreset = false;
+    SaveSettings();
+}
+
+static void DeleteSearchPreset() {
+    std::wstring name = GetCurrentPresetName();
+    if (name.empty()) return;
+    auto names = GetPresetNames();
+    names.erase(std::remove_if(names.begin(), names.end(), [&](const auto& s) { return ToLower(s) == ToLower(name); }), names.end());
+    SavePresetNames(names);
+    WritePrivateProfileStringW(GetPresetSection(name).c_str(), nullptr, nullptr, g_iniPath.c_str());
+    RefreshPresetCombo();
+    SetWindowTextW(g_cmbPreset, L"");
+    SetStatus(L"検索条件プリセットを削除しました: " + name);
+}
+
 static void SetSearchingUi(bool searching) {
     EnableWindow(g_btnSearch, searching ? FALSE : TRUE);
     EnableWindow(g_btnStop, searching ? TRUE : FALSE);
@@ -3163,6 +3588,10 @@ static void SetSearchingUi(bool searching) {
     EnableWindow(g_cmbMode, !searching);
     EnableWindow(g_editDays, !searching);
     EnableWindow(g_cmbTimeBase, !searching);
+    EnableWindow(g_cmbPreset, !searching);
+    EnableWindow(g_btnPresetSave, !searching);
+    EnableWindow(g_btnPresetLoad, !searching);
+    EnableWindow(g_btnPresetDelete, !searching);
 
     EnableWindow(g_chkXls, !searching);
     EnableWindow(g_chkXlsx, !searching);
@@ -3300,7 +3729,22 @@ static void DoLayout(HWND hwnd) {
         tbComboW = max(120, min(tbComboW, avail));
         MoveWindow(g_staticTimeBase, x, y + 4, tbLabelW, labelH, TRUE);
         MoveWindow(g_cmbTimeBase, x + tbLabelW, y, tbComboW, comboDropH, TRUE);
+        y += rowH + gap;
+
+        int presetLabelW = 82;
+        int presetBtnW = 66;
+        int presetBtnsW = presetBtnW * 3 + gap * 3;
+        int presetComboW = max(150, w - padding * 2 - presetLabelW - presetBtnsW);
+        MoveWindow(g_staticPreset, padding, y + 4, presetLabelW, labelH, TRUE);
+        MoveWindow(g_cmbPreset, padding + presetLabelW, y, presetComboW, comboDropH, TRUE);
+        int px = padding + presetLabelW + presetComboW + gap;
+        MoveWindow(g_btnPresetSave, px, y, presetBtnW, rowH, TRUE);
+        px += presetBtnW + gap;
+        MoveWindow(g_btnPresetLoad, px, y, presetBtnW, rowH, TRUE);
+        px += presetBtnW + gap;
+        MoveWindow(g_btnPresetDelete, px, y, presetBtnW, rowH, TRUE);
         y += rowH + padding;
+
         // 拡張子フィルターを検索条件に含めるかどうかの設定。
         // オフのときは対象拡張子セクションを無効化し、拡張子では絞り込まない。
         MoveWindow(g_chkNameIncludeExt, padding, y, max(220, w - padding * 2), rowH, TRUE);
@@ -3511,6 +3955,8 @@ static void DoLayout(HWND hwnd) {
     int filterLabelW = 90;
     MoveWindow(g_staticFilter, rightX, yR + 4, filterLabelW, labelH, TRUE);
     MoveWindow(g_editFilter, rightX + filterLabelW, yR, rightW - filterLabelW, rowH, TRUE);
+    yR += rowH + gap;
+    MoveWindow(g_staticResultDetail, rightX, yR, rightW, rowH, TRUE);
     yR += rowH + padding;
 
     // 結果一覧
@@ -3537,14 +3983,50 @@ static void CopyTextToClipboard(HWND hwnd, const std::wstring& text) {
     CloseClipboard();
 }
 
+static const Hit* GetVisibleHitAt(int visibleIndex) {
+    if (visibleIndex < 0 || visibleIndex >= (int)g_visibleResultIndices.size()) return nullptr;
+    size_t realIndex = g_visibleResultIndices[(size_t)visibleIndex];
+    if (realIndex >= g_results.size() || !g_results[realIndex]) return nullptr;
+    return g_results[realIndex].get();
+}
+
+static void UpdateResultDetailFromSelection() {
+    if (!g_staticResultDetail) return;
+    int sel = ListView_GetNextItem(g_listResults, -1, LVNI_SELECTED);
+    const Hit* hit = GetVisibleHitAt(sel);
+    if (!hit) {
+        SetWindowTextW(g_staticResultDetail, L"選択ファイル: なし");
+        return;
+    }
+    std::wstring text = L"選択ファイル: " + hit->fileName + L"  |  " + hit->timeText + L"  |  " + std::to_wstring(hit->sizeKB) + L" KB  |  " + hit->path;
+    SetWindowTextW(g_staticResultDetail, text.c_str());
+}
+
+static std::vector<std::wstring> GetSelectedVisibleResultPaths() {
+    std::vector<std::wstring> paths;
+    int sel = -1;
+    while ((sel = ListView_GetNextItem(g_listResults, sel, LVNI_SELECTED)) >= 0) {
+        if (const Hit* hit = GetVisibleHitAt(sel)) {
+            paths.push_back(hit->path);
+        }
+    }
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    return paths;
+}
+
 static void ShowResultsContextMenu(HWND hwnd, POINT ptScreen) {
     int sel = ListView_GetNextItem(g_listResults, -1, LVNI_SELECTED);
-    if (sel < 0 || sel >= (int)g_results.size()) return;
-    const auto& hit = *g_results[(size_t)sel];
+    const Hit* hit = GetVisibleHitAt(sel);
+    if (!hit) return;
+
+    const auto selectedPaths = GetSelectedVisibleResultPaths();
 
     HMENU hMenu = CreatePopupMenu();
     AppendMenuW(hMenu, MF_STRING, 1, L"開く");
     AppendMenuW(hMenu, MF_STRING, 2, L"フォルダを開く");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hMenu, MF_STRING, CMD_RESULT_ADD_TO_PRINT, selectedPaths.size() > 1 ? L"選択行を印刷対象へ追加" : L"この行を印刷対象へ追加");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING, 3, L"パスをコピー");
     AppendMenuW(hMenu, MF_STRING, 4, L"ファイル名をコピー");
@@ -3553,18 +4035,22 @@ static void ShowResultsContextMenu(HWND hwnd, POINT ptScreen) {
     DestroyMenu(hMenu);
 
     if (cmd == 1) {
-        ShellExecuteW(hwnd, L"open", hit.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        ShellExecuteW(hwnd, L"open", hit->path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     else if (cmd == 2) {
-        fs::path p(hit.path);
+        fs::path p(hit->path);
         std::wstring folder = p.parent_path().wstring();
         ShellExecuteW(hwnd, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
+    else if (cmd == CMD_RESULT_ADD_TO_PRINT) {
+        PrintToolPage_AppendFiles(selectedPaths.empty() ? std::vector<std::wstring>{ hit->path } : selectedPaths);
+        SetStatus(L"選択した検索結果を印刷対象へ追加しました");
+    }
     else if (cmd == 3) {
-        CopyTextToClipboard(hwnd, hit.path);
+        CopyTextToClipboard(hwnd, hit->path);
     }
     else if (cmd == 4) {
-        CopyTextToClipboard(hwnd, hit.fileName);
+        CopyTextToClipboard(hwnd, hit->fileName);
     }
 }
 
@@ -3950,6 +4436,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_staticMode = CreateWindowW(L"STATIC", L"期間", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticDays = CreateWindowW(L"STATIC", L"過去N日", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticTimeBase = CreateWindowW(L"STATIC", L"日時", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
+        g_staticPreset = CreateWindowW(L"STATIC", L"プリセット", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticFrom = CreateWindowW(L"STATIC", L"開始", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticTo = CreateWindowW(L"STATIC", L"終了", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
         g_staticFilter = CreateWindowW(L"STATIC", L"絞り込み", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, nullptr, g_hInst, nullptr);
@@ -3988,6 +4475,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"作成日時");
         SendMessageW(g_cmbTimeBase, CB_ADDSTRING, 0, (LPARAM)L"更新OR作成");
 
+        g_cmbPreset = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWN | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_CMB_PRESET, g_hInst, nullptr);
+        SendMessageW(g_cmbPreset, EM_SETCUEBANNER, TRUE, (LPARAM)L"例: 月次検索");
+        g_btnPresetSave = CreateWindowW(L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRESET_SAVE, g_hInst, nullptr);
+        g_btnPresetLoad = CreateWindowW(L"BUTTON", L"読込", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRESET_LOAD, g_hInst, nullptr);
+        g_btnPresetDelete = CreateWindowW(L"BUTTON", L"削除", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRESET_DELETE, g_hInst, nullptr);
+
         g_dtpFrom = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | SS_NOTIFY,
             0, 0, 0, 0, hwnd, (HMENU)IDC_DTP_FROM, g_hInst, nullptr);
 
@@ -4011,6 +4505,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HFONT hUiFontBold = g_hFontUiBold ? g_hFontUiBold : hUiFont;
         SendMessageW(g_cmbMode, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_cmbTimeBase, WM_SETFONT, (WPARAM)hUiFont, TRUE);
+        SendMessageW(g_cmbPreset, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpFrom, WM_SETFONT, (WPARAM)hUiFont, TRUE);
         SendMessageW(g_dtpTo, WM_SETFONT, (WPARAM)hUiFont, TRUE);
 
@@ -4112,7 +4607,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_editFilter = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_EDIT_FILTER, g_hInst, nullptr);
         SendMessageW(g_editFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"例: 入出荷 / 工場 / 2026");
-
+        g_staticResultDetail = CreateWindowW(L"STATIC", L"選択ファイル: なし", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_RESULT_DETAIL, g_hInst, nullptr);
 
         // 結果
         g_listResults = CreateWindowW(WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_RESULTS, g_hInst, nullptr);
@@ -4122,16 +4618,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_status = CreateWindowW(STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, g_hInst, nullptr);
 
         HWND controls[] = {
-            g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticFrom, g_staticTo, g_staticFilter,
+            g_staticRoot, g_staticRootsHint, g_staticMode, g_staticDays, g_staticTimeBase, g_staticPreset, g_staticFrom, g_staticTo, g_staticFilter,
             g_staticExclFolder, g_staticExclPattern, g_staticExclName,
             g_btnBrowseRoot, g_listRoots, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
-            g_cmbMode, g_editDays, g_cmbTimeBase, g_dtpFrom, g_dtpTo,
+            g_cmbMode, g_editDays, g_cmbTimeBase, g_cmbPreset, g_btnPresetSave, g_btnPresetLoad, g_btnPresetDelete, g_dtpFrom, g_dtpTo,
             g_frameFolderExcl, g_frameNameExcl,
             g_chkEnableFolderExcl, g_listExcludes, g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
             g_editExclPattern, g_btnAddPattern,
             g_chkEnableNameExcl, g_chkNameIncludeExt, g_editFNamePattern, g_btnAddFName, g_btnRemoveFName, g_btnFNameUp, g_btnFNameDown, g_listFName, g_btnLoadFNameExcl, g_btnSaveFNameExcl,
             GetDlgItem(hwnd, IDC_GRP_EXT), g_chkXls, g_chkXlsx, g_chkXlsm, g_chkXlsb, g_chkXltx, g_chkXltm,
-            g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_staticProgress, g_editFilter, g_listResults, g_status
+            g_btnSearch, g_btnStop, g_btnExportCsv, g_progress, g_staticProgress, g_editFilter, g_staticResultDetail, g_listResults, g_status
         };
         for (HWND h : controls) {
             if (h) {
@@ -4146,6 +4642,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         ApplyModernListBox(g_listFName);
         ApplyModernComboBox(g_cmbMode);
         ApplyModernComboBox(g_cmbTimeBase);
+        ApplyModernComboBox(g_cmbPreset);
         ApplyModernResultsListView(g_listResults);
 
         HWND modernCheckBoxes[] = {
@@ -4160,6 +4657,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         HWND modernButtons[] = {
             g_btnBrowseRoot, g_btnRootRemove, g_btnRootUp, g_btnRootDown, g_btnRootToggle,
+            g_btnPresetSave, g_btnPresetLoad, g_btnPresetDelete,
             g_btnAddExclFolder, g_btnRemoveExcl, g_btnExclUp, g_btnExclDown, g_btnLoadExcl, g_btnSaveExcl,
             g_btnAddPattern, g_btnAddFName, g_btnRemoveFName, g_btnFNameUp, g_btnFNameDown,
             g_btnLoadFNameExcl, g_btnSaveFNameExcl, g_btnSearch, g_btnStop, g_btnExportCsv
@@ -4320,7 +4818,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (id == IDC_EDIT_FILTER && code == EN_CHANGE) {
-            if (!g_searching) {
+            if (!g_loadingPreset && !g_searching) {
                 RebuildListViewFromResults();
             }
             return 0;
@@ -4329,6 +4827,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (id == IDC_CMB_TIMEBASE && code == CBN_SELCHANGE) {
             SetListViewTimeHeader(GetTimeBase());
             SetStatus(L"日時基準: " + TimeBaseText(GetTimeBase()));
+            return 0;
+        }
+        if (id == IDC_BTN_PRESET_SAVE) {
+            SaveSearchPreset();
+            return 0;
+        }
+        if (id == IDC_BTN_PRESET_LOAD) {
+            LoadSearchPreset();
+            return 0;
+        }
+        if (id == IDC_BTN_PRESET_DELETE) {
+            DeleteSearchPreset();
             return 0;
         }
 
@@ -4550,6 +5060,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     }
                     return 0;
                 }
+            }
+            if (hdr->code == LVN_ITEMCHANGED) {
+                UpdateResultDetailFromSelection();
+                return 0;
             }
             if (hdr->code == LVN_COLUMNCLICK) {
                 if (g_searching) return 0;

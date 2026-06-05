@@ -15,3 +15,4 @@ HWND CreatePrintToolPage(HWND parent, HINSTANCE hInstance, const RECT& rc);
 void PrintToolPage_SetVisible(HWND hwnd, bool visible);
 void PrintToolPage_Resize(HWND hwnd, const RECT& rc);
 void PrintToolPage_SetFiles(const std::vector<std::wstring>& files);
+void PrintToolPage_AppendFiles(const std::vector<std::wstring>& files);
