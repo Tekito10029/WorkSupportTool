@@ -323,6 +323,8 @@ static HWND g_staticResultDetail = nullptr;
 static int g_visibleCount = 0;
 static bool g_deferExcludeListRefresh = false;
 static bool g_deferFileNameListRefresh = false;
+static bool g_excludeListDirty = false;
+static bool g_fileNameListDirty = false;
 
 static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
@@ -990,6 +992,11 @@ static std::wstring FolderRuleToDisplay(const ExcludeRule& r) {
 }
 static void RefreshExcludeListBox() {
     if (g_deferExcludeListRefresh || !g_listExcludes) return;
+    if (g_leftTab != 1) {
+        g_excludeListDirty = true;
+        return;
+    }
+
     SendMessageW(g_listExcludes, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listExcludes, LB_RESETCONTENT, 0, 0);
     for (const auto& r : g_excludeRules) {
@@ -997,6 +1004,7 @@ static void RefreshExcludeListBox() {
         SendMessageW(g_listExcludes, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
     }
     SendMessageW(g_listExcludes, WM_SETREDRAW, TRUE, 0);
+    g_excludeListDirty = false;
     RedrawListBoxIfVisible(g_listExcludes);
 }
 static bool IsExcludedDir(const fs::path& dirNorm) {
@@ -1317,12 +1325,18 @@ static void RebuildFileNameExcludeCache() {
 }
 static void RefreshFileNameListBox() {
     if (g_deferFileNameListRefresh || !g_listFName) return;
+    if (g_leftTab != 1) {
+        g_fileNameListDirty = true;
+        return;
+    }
+
     SendMessageW(g_listFName, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listFName, LB_RESETCONTENT, 0, 0);
     for (const auto& s : g_fileNamePatterns) {
         SendMessageW(g_listFName, LB_ADDSTRING, 0, (LPARAM)s.c_str());
     }
     SendMessageW(g_listFName, WM_SETREDRAW, TRUE, 0);
+    g_fileNameListDirty = false;
     RedrawListBoxIfVisible(g_listFName);
 }
 static bool IsExcludedByFileName(const fs::path& p) {
@@ -3033,6 +3047,11 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_listFName, swExcl);
     ShowWindow(g_btnLoadFNameExcl, swExcl);
     ShowWindow(g_btnSaveFNameExcl, swExcl);
+
+    if (!isSearch) {
+        if (g_excludeListDirty) RefreshExcludeListBox();
+        if (g_fileNameListDirty) RefreshFileNameListBox();
+    }
 
     // 表示中のコントロールの有効/無効状態を整合させる
     UpdateUiEnableStates();
