@@ -452,8 +452,13 @@ struct RootEntry {
     bool enabled = true;
 };
 
+static std::vector<RootEntry> g_pendingRootEntries;
+static bool g_rootListDirty = false;
+
 static std::vector<RootEntry> GetRootEntriesFromListBox()
 {
+    if (g_rootListDirty) return g_pendingRootEntries;
+
     std::vector<RootEntry> out;
     if (!g_listRoots) return out;
 
@@ -472,9 +477,10 @@ static std::vector<RootEntry> GetRootEntriesFromListBox()
     return out;
 }
 
-static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
+static void ApplyRootEntriesToListBoxNow(const std::vector<RootEntry>& entries)
 {
     if (!g_listRoots) return;
+
     SendMessageW(g_listRoots, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_listRoots, LB_RESETCONTENT, 0, 0);
     for (const auto& e : entries) {
@@ -484,7 +490,19 @@ static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
         SendMessageW(g_listRoots, LB_ADDSTRING, 0, (LPARAM)disp.c_str());
     }
     SendMessageW(g_listRoots, WM_SETREDRAW, TRUE, 0);
+    g_rootListDirty = false;
     RedrawListBoxIfVisible(g_listRoots);
+}
+
+static void SetRootEntriesToListBox(const std::vector<RootEntry>& entries)
+{
+    if (!g_listRoots || g_leftTab != 0) {
+        g_pendingRootEntries = entries;
+        g_rootListDirty = true;
+        return;
+    }
+
+    ApplyRootEntriesToListBoxNow(entries);
 }
 
 static std::vector<std::wstring> GetEnabledRootsFromListBox()
@@ -3049,7 +3067,10 @@ static void ApplyLeftTabVisibility(bool refreshDirtyExclusionUi = true) {
     ShowWindow(g_btnLoadFNameExcl, swExcl);
     ShowWindow(g_btnSaveFNameExcl, swExcl);
 
-    if (!isSearch && refreshDirtyExclusionUi) {
+    if (isSearch) {
+        if (g_rootListDirty) ApplyRootEntriesToListBoxNow(g_pendingRootEntries);
+    }
+    else if (refreshDirtyExclusionUi) {
         if (g_excludeListDirty) RefreshExcludeListBox();
         if (g_fileNameListDirty) RefreshFileNameListBox();
     }
