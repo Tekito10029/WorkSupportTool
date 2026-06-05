@@ -2978,7 +2978,7 @@ static void RedrawListBoxIfVisible(HWND hwnd) {
 }
 
 // -------------------- 左タブ（検索 / 除外） --------------------
-static void ApplyLeftTabVisibility() {
+static void ApplyLeftTabVisibility(bool refreshDirtyExclusionUi = true) {
     bool isSearch = (g_leftTab == 0);
     int swSearch = isSearch ? SW_SHOW : SW_HIDE;
     int swExcl = isSearch ? SW_HIDE : SW_SHOW;
@@ -3048,7 +3048,7 @@ static void ApplyLeftTabVisibility() {
     ShowWindow(g_btnLoadFNameExcl, swExcl);
     ShowWindow(g_btnSaveFNameExcl, swExcl);
 
-    if (!isSearch) {
+    if (!isSearch && refreshDirtyExclusionUi) {
         if (g_excludeListDirty) RefreshExcludeListBox();
         if (g_fileNameListDirty) RefreshFileNameListBox();
     }
@@ -3385,7 +3385,7 @@ static void LoadSearchPreset() {
         else AddOrUpdateExcludePatternOrSubstring(raw, -1);
     }
     g_deferExcludeListRefresh = false;
-    RefreshExcludeListBox();
+    g_excludeListDirty = true;
 
     g_deferFileNameListRefresh = true;
     g_fileNamePatterns.clear();
@@ -3396,10 +3396,10 @@ static void LoadSearchPreset() {
     }
     if (g_fileNamePatterns.empty()) g_fileNamePatterns.push_back(L"~$");
     g_deferFileNameListRefresh = false;
-    RefreshFileNameListBox();
+    g_fileNameListDirty = true;
     RebuildFileNameExcludeCache();
 
-    ApplyLeftTabVisibility();
+    ApplyLeftTabVisibility(false);
     if (g_hwndMain) {
         DoLayout(g_hwndMain);
     }
