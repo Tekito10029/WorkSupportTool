@@ -327,6 +327,26 @@ static bool g_excludeListDirty = false;
 static bool g_fileNameListDirty = false;
 static bool g_loadingPreset = false;
 
+struct SearchCheckState {
+    bool xls = true;
+    bool xlsx = true;
+    bool xlsm = true;
+    bool xlsb = true;
+    bool xltx = true;
+    bool xltm = true;
+    bool nameIncludeExt = true;
+    bool dirty = false;
+};
+
+struct ExclusionCheckState {
+    bool enableFolder = true;
+    bool enableName = true;
+    bool dirty = false;
+};
+
+static SearchCheckState g_searchCheckState;
+static ExclusionCheckState g_exclusionCheckState;
+
 static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
 static HWND g_dtpFrom = nullptr;
@@ -626,8 +646,106 @@ static std::wstring GetWindowTextWStr(HWND h) {
     return s;
 }
 static void SetWindowTextWStr(HWND h, const std::wstring& s) { SetWindowTextW(h, s.c_str()); }
-static bool IsChecked(HWND hChk) { return (SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED); }
-static void SetChecked(HWND hChk, bool v) { SendMessageW(hChk, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0); }
+static bool IsSearchTabCheckBox(HWND hChk)
+{
+    return hChk == g_chkXls || hChk == g_chkXlsx || hChk == g_chkXlsm ||
+        hChk == g_chkXlsb || hChk == g_chkXltx || hChk == g_chkXltm ||
+        hChk == g_chkNameIncludeExt;
+}
+
+static bool IsExclusionTabCheckBox(HWND hChk)
+{
+    return hChk == g_chkEnableFolderExcl || hChk == g_chkEnableNameExcl;
+}
+
+static bool GetStoredCheckValue(HWND hChk, bool& out)
+{
+    if (hChk == g_chkXls) { out = g_searchCheckState.xls; return true; }
+    if (hChk == g_chkXlsx) { out = g_searchCheckState.xlsx; return true; }
+    if (hChk == g_chkXlsm) { out = g_searchCheckState.xlsm; return true; }
+    if (hChk == g_chkXlsb) { out = g_searchCheckState.xlsb; return true; }
+    if (hChk == g_chkXltx) { out = g_searchCheckState.xltx; return true; }
+    if (hChk == g_chkXltm) { out = g_searchCheckState.xltm; return true; }
+    if (hChk == g_chkNameIncludeExt) { out = g_searchCheckState.nameIncludeExt; return true; }
+    if (hChk == g_chkEnableFolderExcl) { out = g_exclusionCheckState.enableFolder; return true; }
+    if (hChk == g_chkEnableNameExcl) { out = g_exclusionCheckState.enableName; return true; }
+    return false;
+}
+
+static bool StoreCheckValue(HWND hChk, bool v)
+{
+    if (hChk == g_chkXls) { g_searchCheckState.xls = v; return true; }
+    if (hChk == g_chkXlsx) { g_searchCheckState.xlsx = v; return true; }
+    if (hChk == g_chkXlsm) { g_searchCheckState.xlsm = v; return true; }
+    if (hChk == g_chkXlsb) { g_searchCheckState.xlsb = v; return true; }
+    if (hChk == g_chkXltx) { g_searchCheckState.xltx = v; return true; }
+    if (hChk == g_chkXltm) { g_searchCheckState.xltm = v; return true; }
+    if (hChk == g_chkNameIncludeExt) { g_searchCheckState.nameIncludeExt = v; return true; }
+    if (hChk == g_chkEnableFolderExcl) { g_exclusionCheckState.enableFolder = v; return true; }
+    if (hChk == g_chkEnableNameExcl) { g_exclusionCheckState.enableName = v; return true; }
+    return false;
+}
+
+static bool IsChecked(HWND hChk)
+{
+    if (!hChk) return false;
+
+    bool stored = false;
+    if (GetStoredCheckValue(hChk, stored)) {
+        bool hiddenSearchCheck = IsSearchTabCheckBox(hChk) && (g_leftTab != 0 || g_searchCheckState.dirty);
+        bool hiddenExclusionCheck = IsExclusionTabCheckBox(hChk) && (g_leftTab != 1 || g_exclusionCheckState.dirty);
+        if (hiddenSearchCheck || hiddenExclusionCheck) return stored;
+
+        bool actual = (SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        StoreCheckValue(hChk, actual);
+        return actual;
+    }
+
+    return (SendMessageW(hChk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+}
+
+static void SetCheckedNow(HWND hChk, bool v)
+{
+    if (!hChk) return;
+    SendMessageW(hChk, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+static void SetChecked(HWND hChk, bool v)
+{
+    if (!hChk) return;
+
+    if (StoreCheckValue(hChk, v)) {
+        if (IsSearchTabCheckBox(hChk) && g_leftTab != 0) {
+            g_searchCheckState.dirty = true;
+            return;
+        }
+        if (IsExclusionTabCheckBox(hChk) && g_leftTab != 1) {
+            g_exclusionCheckState.dirty = true;
+            return;
+        }
+    }
+
+    SetCheckedNow(hChk, v);
+}
+
+static void ApplySearchCheckBoxesNow()
+{
+    SetCheckedNow(g_chkXls, g_searchCheckState.xls);
+    SetCheckedNow(g_chkXlsx, g_searchCheckState.xlsx);
+    SetCheckedNow(g_chkXlsm, g_searchCheckState.xlsm);
+    SetCheckedNow(g_chkXlsb, g_searchCheckState.xlsb);
+    SetCheckedNow(g_chkXltx, g_searchCheckState.xltx);
+    SetCheckedNow(g_chkXltm, g_searchCheckState.xltm);
+    SetCheckedNow(g_chkNameIncludeExt, g_searchCheckState.nameIncludeExt);
+    g_searchCheckState.dirty = false;
+}
+
+static void ApplyExclusionCheckBoxesNow()
+{
+    SetCheckedNow(g_chkEnableFolderExcl, g_exclusionCheckState.enableFolder);
+    SetCheckedNow(g_chkEnableNameExcl, g_exclusionCheckState.enableName);
+    g_exclusionCheckState.dirty = false;
+}
 
 static void SetStatus(const std::wstring& s) { if (g_status) SendMessageW(g_status, SB_SETTEXTW, 0, (LPARAM)s.c_str()); }
 
@@ -3068,11 +3186,15 @@ static void ApplyLeftTabVisibility(bool refreshDirtyExclusionUi = true) {
     ShowWindow(g_btnSaveFNameExcl, swExcl);
 
     if (isSearch) {
+        if (g_searchCheckState.dirty) ApplySearchCheckBoxesNow();
         if (g_rootListDirty) ApplyRootEntriesToListBoxNow(g_pendingRootEntries);
     }
-    else if (refreshDirtyExclusionUi) {
-        if (g_excludeListDirty) RefreshExcludeListBox();
-        if (g_fileNameListDirty) RefreshFileNameListBox();
+    else {
+        if (g_exclusionCheckState.dirty) ApplyExclusionCheckBoxesNow();
+        if (refreshDirtyExclusionUi) {
+            if (g_excludeListDirty) RefreshExcludeListBox();
+            if (g_fileNameListDirty) RefreshFileNameListBox();
+        }
     }
 
     // 表示中のコントロールの有効/無効状態を整合させる
