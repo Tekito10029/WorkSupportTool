@@ -59,12 +59,16 @@ namespace {
         IDC_BTN_ADD_FILES,
         IDC_BTN_REMOVE_FILE,
         IDC_BTN_CLEAR_FILES,
+        IDC_BTN_FILE_UP,
+        IDC_BTN_FILE_DOWN,
         IDC_STATIC_REMOVE_TARGET,
 
         IDC_STATIC_SHEETS,
         IDC_EDIT_SHEETS,
         IDC_STATIC_SHEETS_HINT,
         IDC_BTN_SAVE_SHEETSET,
+        IDC_BTN_CHECK_PRINT,
+        IDC_BTN_LOAD_SHEETS,
 
         IDC_STATIC_COPIES,
         IDC_EDIT_COPIES,
@@ -78,6 +82,7 @@ namespace {
         IDC_CMB_PAPER,
 
         IDC_BTN_PRINT,
+        IDC_BTN_CANCEL_PRINT,
         IDC_EDIT_LOG
     };
 
@@ -94,12 +99,16 @@ namespace {
     HWND g_btnAddFiles = nullptr;
     HWND g_btnRemoveFile = nullptr;
     HWND g_btnClearFiles = nullptr;
+    HWND g_btnFileUp = nullptr;
+    HWND g_btnFileDown = nullptr;
     HWND g_staticRemoveTarget = nullptr;
 
     HWND g_staticSheets = nullptr;
     HWND g_editSheets = nullptr;
     HWND g_staticSheetsHint = nullptr;
     HWND g_btnSaveSheetSet = nullptr;
+    HWND g_btnCheckPrint = nullptr;
+    HWND g_btnLoadSheets = nullptr;
 
     HWND g_staticCopies = nullptr;
     HWND g_editCopies = nullptr;
@@ -113,8 +122,10 @@ namespace {
     HWND g_cmbPaper = nullptr;
 
     HWND g_btnPrint = nullptr;
+    HWND g_btnCancelPrint = nullptr;
     HWND g_editLog = nullptr;
     bool g_isPrinting = false;
+    bool g_printCancelRequested = false;
 
     HWND g_log = nullptr;
 
@@ -814,6 +825,38 @@ namespace {
         AddLog(L"削除: " + removed);
     }
 
+    void MoveCurrentFileLine(int delta) {
+        int idx = GetCurrentFileLineIndex();
+        int tgt = idx + delta;
+        if (idx < 0 || tgt < 0 || idx >= (int)g_files.size() || tgt >= (int)g_files.size()) return;
+        std::swap(g_files[(size_t)idx], g_files[(size_t)tgt]);
+        RefreshFileList();
+        SendMessageW(g_listFiles, LB_SETCURSEL, (WPARAM)tgt, 0);
+        UpdateRemoveTargetLabel();
+        AddLog(delta < 0 ? L"印刷順を上へ移動しました。" : L"印刷順を下へ移動しました。");
+    }
+
+    void AppendFilesToPrintList(const std::vector<std::wstring>& files, bool sortAfterAppend) {
+        int added = 0;
+        for (const auto& f : files) {
+            if (f.empty()) continue;
+            if (std::find(g_files.begin(), g_files.end(), f) == g_files.end()) {
+                g_files.push_back(f);
+                added++;
+            }
+        }
+        if (sortAfterAppend) {
+            std::sort(g_files.begin(), g_files.end());
+        }
+        g_files.erase(std::unique(g_files.begin(), g_files.end()), g_files.end());
+        RefreshFileList();
+        if (g_listFiles && !g_files.empty()) {
+            SendMessageW(g_listFiles, LB_SETCURSEL, (WPARAM)(g_files.size() - 1), 0);
+        }
+        UpdateRemoveTargetLabel();
+        if (added > 0) AddLog(L"印刷対象を追加しました: " + std::to_wstring(added) + L" 件");
+    }
+
     std::wstring Trim(const std::wstring& s) {
         const wchar_t* ws = L" \t\r\n";
         const size_t a = s.find_first_not_of(ws);
@@ -986,6 +1029,62 @@ namespace {
             return nullptr;
         }
         return result.pdispVal;
+    }
+
+    IDispatch* GetWorksheetByIndex(IDispatch* worksheets, long index) {
+        if (!worksheets) return nullptr;
+        VARIANT arg;
+        VariantInit(&arg);
+        arg.vt = VT_I4;
+        arg.lVal = index;
+
+        VARIANT result;
+        VariantInit(&result);
+        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &result, worksheets, L"Item", 1, &arg);
+        if (FAILED(hr) || result.vt != VT_DISPATCH || !result.pdispVal) {
+            VariantClear(&result);
+            return nullptr;
+        }
+        return result.pdispVal;
+    }
+
+    bool GetLongProperty(IDispatch* disp, LPCOLESTR name, long& outValue) {
+        outValue = 0;
+        VARIANT result;
+        VariantInit(&result);
+        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &result, disp, name, 0);
+        if (SUCCEEDED(hr)) {
+            if (result.vt == VT_I4 || result.vt == VT_INT) outValue = result.lVal;
+            else if (result.vt == VT_I2) outValue = result.iVal;
+            else {
+                VARIANT converted;
+                VariantInit(&converted);
+                if (SUCCEEDED(VariantChangeType(&converted, &result, 0, VT_I4))) outValue = converted.lVal;
+                VariantClear(&converted);
+            }
+        }
+        VariantClear(&result);
+        return SUCCEEDED(hr);
+    }
+
+    bool GetStringProperty(IDispatch* disp, LPCOLESTR name, std::wstring& outValue) {
+        outValue.clear();
+        VARIANT result;
+        VariantInit(&result);
+        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &result, disp, name, 0);
+        if (SUCCEEDED(hr)) {
+            if (result.vt == VT_BSTR && result.bstrVal) outValue = result.bstrVal;
+            else {
+                VARIANT converted;
+                VariantInit(&converted);
+                if (SUCCEEDED(VariantChangeType(&converted, &result, 0, VT_BSTR)) && converted.bstrVal) {
+                    outValue = converted.bstrVal;
+                }
+                VariantClear(&converted);
+            }
+        }
+        VariantClear(&result);
+        return SUCCEEDED(hr) && !outValue.empty();
     }
 
     bool SetBoolProperty(IDispatch* disp, LPCOLESTR name, bool value) {
@@ -1430,6 +1529,150 @@ namespace {
         return ok;
     }
 
+    bool GetWorkbookSheetNames(const std::wstring& filePath, std::vector<std::wstring>& outNames, std::wstring& outMessage) {
+        outNames.clear();
+        outMessage.clear();
+        CLSID clsid{};
+        HRESULT hr = CLSIDFromProgID(L"Excel.Application", &clsid);
+        if (FAILED(hr)) { outMessage = L"Excel.Application を作成できませんでした。"; return false; }
+
+        IDispatch* app = nullptr;
+        hr = CoCreateInstance(clsid, nullptr, CLSCTX_LOCAL_SERVER, IID_IDispatch, (void**)&app);
+        if (FAILED(hr) || !app) { outMessage = L"Excel を起動できませんでした。"; return false; }
+        SetBoolProperty(app, L"Visible", false);
+        SetBoolProperty(app, L"DisplayAlerts", false);
+
+        IDispatch* workbooks = nullptr;
+        if (!GetDispatchProperty(app, L"Workbooks", &workbooks)) {
+            outMessage = L"Workbooks の取得に失敗しました。";
+            CallMethod(app, L"Quit");
+            app->Release();
+            return false;
+        }
+
+        IDispatch* book = nullptr;
+        if (!OpenWorkbook(workbooks, filePath, &book)) {
+            outMessage = L"ブックを開けませんでした: " + filePath;
+            workbooks->Release();
+            CallMethod(app, L"Quit");
+            app->Release();
+            return false;
+        }
+
+        IDispatch* worksheets = nullptr;
+        if (GetDispatchProperty(book, L"Worksheets", &worksheets)) {
+            long count = 0;
+            GetLongProperty(worksheets, L"Count", count);
+            for (long i = 1; i <= count; ++i) {
+                IDispatch* ws = GetWorksheetByIndex(worksheets, i);
+                if (!ws) continue;
+                std::wstring name;
+                if (GetStringProperty(ws, L"Name", name)) outNames.push_back(name);
+                ws->Release();
+            }
+            worksheets->Release();
+        }
+
+        VARIANT saveChanges;
+        VariantInit(&saveChanges);
+        saveChanges.vt = VT_BOOL;
+        saveChanges.boolVal = VARIANT_FALSE;
+        VARIANT result;
+        VariantInit(&result);
+        AutoWrap(DISPATCH_METHOD, &result, book, L"Close", 1, &saveChanges);
+        VariantClear(&result);
+        book->Release();
+        workbooks->Release();
+        CallMethod(app, L"Quit");
+        app->Release();
+
+        if (outNames.empty()) outMessage = L"シート名を取得できませんでした: " + filePath;
+        return !outNames.empty();
+    }
+
+    bool CheckOneBookSheets(const std::wstring& filePath, const std::vector<std::wstring>& sheetNames, std::wstring& outMessage) {
+        std::vector<std::wstring> names;
+        std::wstring msg;
+        if (!GetWorkbookSheetNames(filePath, names, msg)) {
+            outMessage = msg;
+            return false;
+        }
+
+        std::vector<std::wstring> missing;
+        for (const auto& target : sheetNames) {
+            bool found = false;
+            for (const auto& name : names) {
+                if (_wcsicmp(name.c_str(), target.c_str()) == 0) { found = true; break; }
+            }
+            if (!found) missing.push_back(target);
+        }
+
+        if (missing.empty()) {
+            outMessage = L"OK: " + filePath;
+            return true;
+        }
+
+        std::wstringstream ss;
+        ss << L"NG: " << filePath << L" / 見つからないシート: ";
+        for (size_t i = 0; i < missing.size(); ++i) {
+            if (i) ss << L", ";
+            ss << missing[i];
+        }
+        outMessage = ss.str();
+        return false;
+    }
+
+    void LoadSheetNamesFromSelectedBook() {
+        int idx = GetCurrentFileLineIndex();
+        if (idx < 0 || idx >= (int)g_files.size()) {
+            MessageBoxW(g_hwndPage, L"シート名を取得するブックを選択してください。", L"印刷ツール", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        std::vector<std::wstring> names;
+        std::wstring msg;
+        if (!GetWorkbookSheetNames(g_files[(size_t)idx], names, msg)) {
+            MessageBoxW(g_hwndPage, msg.c_str(), L"印刷ツール", MB_OK | MB_ICONERROR);
+            AddLog(msg);
+            return;
+        }
+        std::wstring text;
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i) text += L"\r\n";
+            text += names[i];
+        }
+        SetWindowTextW(g_editSheets, text.c_str());
+        AddLog(L"選択ブックからシート名を取得しました: " + std::to_wstring(names.size()) + L" 件");
+    }
+
+    void CheckPrintTargets() {
+        if (g_files.empty()) {
+            MessageBoxW(g_hwndPage, L"先にExcelブックを追加してください。", L"印刷ツール", MB_ICONWARNING);
+            return;
+        }
+        wchar_t sheetBuf[4096]{};
+        GetWindowTextW(g_editSheets, sheetBuf, 4095);
+        std::vector<std::wstring> sheetNames = SplitSheetNames(sheetBuf);
+        if (sheetNames.empty()) {
+            MessageBoxW(g_hwndPage, L"確認するシート名を1つ以上入力してください。", L"印刷ツール", MB_ICONWARNING);
+            return;
+        }
+
+        AddLog(L"印刷前チェックを開始します...");
+        int okCount = 0;
+        for (const auto& file : g_files) {
+            std::wstring msg;
+            if (CheckOneBookSheets(file, sheetNames, msg)) okCount++;
+            AddLog(msg);
+
+            MSG m{};
+            while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
+        }
+        AddLog(L"印刷前チェック完了: OK " + std::to_wstring(okCount) + L" / " + std::to_wstring(g_files.size()) + L" 件");
+    }
+
     bool PrintOneBook(const std::wstring& filePath,
         const std::vector<std::wstring>& sheetNames,
         int copies,
@@ -1598,7 +1841,9 @@ namespace {
         }
 
         g_isPrinting = true;
+        g_printCancelRequested = false;
         if (g_btnPrint) EnableWindow(g_btnPrint, FALSE);
+        if (g_btnCancelPrint) EnableWindow(g_btnCancelPrint, TRUE);
 
         if (g_btnPrint) {
             SetWindowTextW(g_btnPrint, L"印刷中...");
@@ -1611,6 +1856,7 @@ namespace {
                 SetWindowTextW(g_btnPrint, L"3. 印刷を実行");
                 EnableWindow(g_btnPrint, TRUE);
             }
+            if (g_btnCancelPrint) EnableWindow(g_btnCancelPrint, FALSE);
             };
 
         if (g_files.empty()) {
@@ -1668,6 +1914,11 @@ namespace {
         }
 
         for (const auto& file : g_files) {
+            if (g_printCancelRequested) {
+                AddLog(L"印刷停止要求により、残りのブックをスキップしました。");
+                break;
+            }
+
             // ブックごとに処理結果をログへ出し、長い連続印刷中もUIメッセージを処理する
             std::wstring msg;
             PrintOneBook(file, sheetNames, copies, preview, selectedPrinter, paperCode, msg);
@@ -1680,7 +1931,7 @@ namespace {
             }
         }
 
-        AddLog(L"完了しました。");
+        AddLog(g_printCancelRequested ? L"停止しました。" : L"完了しました。");
         finishPrint();
     }
 
@@ -1694,7 +1945,7 @@ namespace {
         const int labelW = 110;
         const int copiesW = 80;
         const int btnW = 140;
-        const int smallBtnW = 120;
+        const int smallBtnW = 112;
         const int targetH = 24;
 
         const int x = margin;
@@ -1711,7 +1962,7 @@ namespace {
 
         // 対象ブック一覧
         D(g_listFiles, x, y, w, 150);
-        y += 120 + gap;
+        y += 150 + gap;
 
         // 現在の削除対象
         D(g_staticRemoveTarget, x, y, w, targetH);
@@ -1726,20 +1977,32 @@ namespace {
         btnX += smallBtnW + gap;
 
         D(g_btnClearFiles, btnX, y, smallBtnW, rowH);
+        btnX += smallBtnW + gap;
+        D(g_btnFileUp, btnX, y, 72, rowH);
+        btnX += 72 + gap;
+        D(g_btnFileDown, btnX, y, 72, rowH);
         y += rowH + 30;
 
         // 印刷シート名
         D(g_staticSheets, x, y + 5, labelW, 22);
-        D(g_editSheets, x + labelW, y, w - labelW - btnW - gap, 52);
-        D(g_btnSaveSheetSet, x + w - btnW, y, btnW, rowH);
-        y += 56;
+        int sheetBtnW = 110;
+        int sheetBtnsW = sheetBtnW * 3 + gap * 3;
+        D(g_editSheets, x + labelW, y, max(120, w - labelW - sheetBtnsW), 58);
+        int sx = x + w - sheetBtnsW + gap;
+        D(g_btnLoadSheets, sx, y, sheetBtnW, rowH);
+        sx += sheetBtnW + gap;
+        D(g_btnCheckPrint, sx, y, sheetBtnW, rowH);
+        sx += sheetBtnW + gap;
+        D(g_btnSaveSheetSet, sx, y, sheetBtnW, rowH);
+        y += 62;
 
         D(g_staticSheetsHint, x + labelW, y, w - labelW, 24);
-        //y += 24;
+        y += 24 + gap;
 
         // 部数/プレビュー/印刷
         D(g_staticCopies, x, y + 5, labelW, 22);
         D(g_editCopies, x + labelW, y, copiesW, rowH);
+        D(g_btnCancelPrint, x + w - btnW * 2 - gap, y - 2, btnW, rowH + 4);
         D(g_btnPrint, x + w - btnW, y - 2, btnW, rowH + 4);
         y += rowH + 18;
 
@@ -1789,6 +2052,10 @@ namespace {
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_REMOVE_FILE, g_hInst, nullptr);
             g_btnClearFiles = CreateWindowW(L"BUTTON", L"一覧クリア",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CLEAR_FILES, g_hInst, nullptr);
+            g_btnFileUp = CreateWindowW(L"BUTTON", L"上へ",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FILE_UP, g_hInst, nullptr);
+            g_btnFileDown = CreateWindowW(L"BUTTON", L"下へ",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_FILE_DOWN, g_hInst, nullptr);
             g_staticRemoveTarget = CreateWindowW(L"STATIC", L"対象: なし",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_REMOVE_TARGET, g_hInst, nullptr);
 
@@ -1801,6 +2068,10 @@ namespace {
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_SHEETS_HINT, g_hInst, nullptr);
             g_btnSaveSheetSet = CreateWindowW(L"BUTTON", L"設定保存",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE_SHEETSET, g_hInst, nullptr);
+            g_btnLoadSheets = CreateWindowW(L"BUTTON", L"シート取得",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LOAD_SHEETS, g_hInst, nullptr);
+            g_btnCheckPrint = CreateWindowW(L"BUTTON", L"事前チェック",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CHECK_PRINT, g_hInst, nullptr);
 
             g_staticCopies = CreateWindowW(L"STATIC", L"部数",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_COPIES, g_hInst, nullptr);
@@ -1826,6 +2097,9 @@ namespace {
 
             g_btnPrint = CreateWindowW(L"BUTTON", L"3. 印刷を実行",
                 WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_PRINT, g_hInst, nullptr);
+            g_btnCancelPrint = CreateWindowW(L"BUTTON", L"印刷停止",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CANCEL_PRINT, g_hInst, nullptr);
+            EnableWindow(g_btnCancelPrint, FALSE);
 
             g_log = CreateWindowW(L"STATIC", L"4. 実行ログ",
                 WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATIC_FILES, g_hInst, nullptr);
@@ -1846,11 +2120,11 @@ namespace {
             ShowWindow(g_cmbPaper, SW_HIDE);
 
             HWND controls[] = {
-                g_staticFiles, g_listFiles, g_btnAddFiles, g_btnRemoveFile, g_btnClearFiles, g_staticRemoveTarget,
-                g_staticSheets, g_editSheets, g_staticSheetsHint, g_btnSaveSheetSet,
+                g_staticFiles, g_listFiles, g_btnAddFiles, g_btnRemoveFile, g_btnClearFiles, g_btnFileUp, g_btnFileDown, g_staticRemoveTarget,
+                g_staticSheets, g_editSheets, g_staticSheetsHint, g_btnSaveSheetSet, g_btnLoadSheets, g_btnCheckPrint,
                 g_staticCopies, g_editCopies, g_chkPreview,
                 g_staticPrinter, g_cmbPrinter, g_btnPrinterProp,
-                g_staticPaper, g_cmbPaper, g_btnPrint, g_editLog,g_log
+                g_staticPaper, g_cmbPaper, g_btnPrint, g_btnCancelPrint, g_editLog, g_log
             };
             for (HWND h : controls) {
                 if (h) {
@@ -1865,8 +2139,9 @@ namespace {
             SendMessageW(g_btnPrint, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
             HWND modernButtons[] = {
-                g_btnAddFiles, g_btnRemoveFile, g_btnClearFiles, g_btnSaveSheetSet,
-                g_btnPrinterProp, g_btnPrint
+                g_btnAddFiles, g_btnRemoveFile, g_btnClearFiles, g_btnFileUp, g_btnFileDown,
+                g_btnSaveSheetSet, g_btnLoadSheets, g_btnCheckPrint,
+                g_btnPrinterProp, g_btnPrint, g_btnCancelPrint
             };
             for (HWND h : modernButtons) {
                 EnableModernOwnerDrawButton(h);
@@ -1964,8 +2239,24 @@ namespace {
                 AddLog(L"一覧をクリアしました。");
                 return 0;
 
+            case IDC_BTN_FILE_UP:
+                MoveCurrentFileLine(-1);
+                return 0;
+
+            case IDC_BTN_FILE_DOWN:
+                MoveCurrentFileLine(1);
+                return 0;
+
             case IDC_BTN_SAVE_SHEETSET:
                 SaveSheetSettings();
+                return 0;
+
+            case IDC_BTN_LOAD_SHEETS:
+                LoadSheetNamesFromSelectedBook();
+                return 0;
+
+            case IDC_BTN_CHECK_PRINT:
+                CheckPrintTargets();
                 return 0;
 
             case IDC_BTN_PRINTER_PROP:
@@ -1981,6 +2272,13 @@ namespace {
             case IDC_BTN_PRINT:
                 if (!g_isPrinting) {
                     DoPrint();
+                }
+                return 0;
+
+            case IDC_BTN_CANCEL_PRINT:
+                if (g_isPrinting) {
+                    g_printCancelRequested = true;
+                    AddLog(L"印刷停止を要求しました。現在のブック処理後に停止します。");
                 }
                 return 0;
 
@@ -2041,6 +2339,10 @@ void PrintToolPage_SetFiles(const std::vector<std::wstring>& files) {
     RefreshFileList();
     UpdateRemoveTargetLabel();
     AddLog(L"検索結果を印刷対象一覧へ反映しました。");
+}
+
+void PrintToolPage_AppendFiles(const std::vector<std::wstring>& files) {
+    AppendFilesToPrintList(files, false);
 }
 
 bool RegisterPrintToolPageClass(HINSTANCE hInstance) {
