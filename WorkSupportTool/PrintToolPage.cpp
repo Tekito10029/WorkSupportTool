@@ -1982,7 +1982,7 @@ namespace {
 
         // 対象ブック一覧
         D(g_listFiles, x, y, w, 150);
-        y += 150 + gap;
+        y += 125 + gap;
 
         // 現在の削除対象
         D(g_staticRemoveTarget, x, y, w, targetH);
@@ -2001,7 +2001,7 @@ namespace {
         D(g_btnFileUp, btnX, y, 72, rowH);
         btnX += 72 + gap;
         D(g_btnFileDown, btnX, y, 72, rowH);
-        y += rowH + 30;
+        y += rowH + 20;
 
         // 印刷シート名
         D(g_staticSheets, x, y + 5, labelW, 22);
@@ -2017,7 +2017,7 @@ namespace {
         y += 62;
 
         D(g_staticSheetsHint, x + labelW, y, w - labelW, 24);
-        y += 24 + gap;
+        //y += 24 + gap;
 
         // 部数/プレビュー/印刷
         D(g_staticCopies, x, y + 5, labelW, 22);
