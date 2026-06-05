@@ -325,6 +325,7 @@ static bool g_deferExcludeListRefresh = false;
 static bool g_deferFileNameListRefresh = false;
 static bool g_excludeListDirty = false;
 static bool g_fileNameListDirty = false;
+static bool g_loadingPreset = false;
 
 static HWND g_staticFrom = nullptr;
 static HWND g_staticTo = nullptr;
@@ -3352,6 +3353,8 @@ static void LoadSearchPreset() {
         return;
     }
 
+    g_loadingPreset = true;
+
     std::vector<RootEntry> roots;
     for (int i = 0; i < rootsCount; ++i) {
         auto path = Trim(IniReadStr(sec.c_str(), (L"RootPath" + std::to_wstring(i)).c_str(), L""));
@@ -3399,14 +3402,8 @@ static void LoadSearchPreset() {
     g_fileNameListDirty = true;
     RebuildFileNameExcludeCache();
 
-    ApplyLeftTabVisibility(false);
-    if (g_hwndMain) {
-        DoLayout(g_hwndMain);
-    }
-    SetListViewTimeHeader(GetTimeBase());
-    RebuildListViewFromResults();
+    g_loadingPreset = false;
     SaveSettings();
-    SetStatus(L"検索条件プリセットを読み込みました: " + name);
 }
 
 static void DeleteSearchPreset() {
@@ -4665,7 +4662,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (id == IDC_EDIT_FILTER && code == EN_CHANGE) {
-            if (!g_searching) {
+            if (!g_loadingPreset && !g_searching) {
                 RebuildListViewFromResults();
             }
             return 0;
